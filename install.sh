@@ -277,8 +277,65 @@ EOF
 }
 
 # =====================
-# 1. Зависимости
-# =====================
+# Выбор быстрого зеркала
+optimize_mirrors() {
+    echo "=== Поиск быстрого зеркала ==="
+    
+    local mirrors=(
+        "https://grimler.se/termux/termux-main"
+        "https://mirror.mwt.me/termux/main"
+        "https://termux.librehat.com/apt/termux-main"
+        "https://packages.termux.dev/apt/termux-main"
+    )
+    
+    local best_mirror=""
+    local best_time=10000
+    
+    # Нужен curl для теста
+    if ! command -v curl &>/dev/null; then
+        pkg install -y curl &>/dev/null || return 1
+    fi
+
+    echo "Тест скорости (время отклика):"
+    
+    for url in "${mirrors[@]}"; do
+        # Замеряем время скачивания Release файла (head request или маленький файл)
+        local time
+        time=$(curl -o /dev/null -s -w "%{time_total}" --connect-timeout 2 --max-time 3 "$url/dists/stable/Release")
+        
+        if [ -n "$time" ] && [ "$time" != "0.000000" ]; then
+            echo "  $url -> ${time}s"
+            # Сравниваем float (через bc или awk, но awk надежнее)
+            local is_faster
+            is_faster=$(echo "$time < $best_time" | awk '{print ($1)}')
+            if [ "$is_faster" -eq 1 ]; then
+                best_time=$time
+                best_mirror=$url
+            fi
+        else
+            echo "  $url -> Тайм-аут"
+        fi
+    done
+
+    if [ -n "$best_mirror" ] && [ "$best_time" != "10000" ]; then
+        echo ""
+        echo "Лучшее зеркало: $best_mirror"
+        echo "Применяю..."
+        
+        # Бэкап
+        cp "$PREFIX/etc/apt/sources.list" "$PREFIX/etc/apt/sources.list.bak"
+        # Запись
+        echo "deb $best_mirror stable main" > "$PREFIX/etc/apt/sources.list"
+        
+        echo "Обновление списков..."
+        pkg update -y
+    else
+        echo "Не удалось выбрать зеркало, оставляем текущее."
+    fi
+    echo ""
+}
+
+# Генерация start.sh (использует proot-distro)
 
 install_java() {
     echo ""
@@ -290,16 +347,23 @@ install_java() {
     # 1. Установка proot-distro
     if ! command -v proot-distro &>/dev/null; then
         echo "[1/4] Установка proot-distro..."
+        
+        # Сначала пробуем установить так
         pkg install -y proot-distro
+        
+        # Если не вышло — ищем зеркала
         if [ $? -ne 0 ]; then
             echo ""
-            echo "ОШИБКА: Не удалось установить proot-distro!"
-            echo "Возможно, сломаны зеркала Termux."
-            echo "Попробуй выполнить команду:"
-            echo "  termux-change-repo"
-            echo "Выбери 'Main repository' -> 'Mirrors by Grimler' (или любое другое)."
-            echo "Затем запусти установку снова."
-            return 1
+            echo "ОШИБКА загрузки. Пробую найти быстрые зеркала..."
+            optimize_mirrors
+            pkg install -y proot-distro
+            
+            if [ $? -ne 0 ]; then
+                echo ""
+                echo "ОШИБКА: Не удалось установить proot-distro даже с новыми зеркалами!"
+                echo "Попробуй выполнить 'termux-change-repo' вручную."
+                return 1
+            fi
         fi
     fi
 
