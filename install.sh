@@ -20,7 +20,7 @@ fi
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
 POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
-OPENJDK8_ALT_URL="https://raw.githubusercontent.com/nicola02nb/termux-openjdk-8/main/install.sh"
+JAVA8_INSTALL_URL="https://raw.githubusercontent.com/MasterDevX/Termux-Java/master/installjava"
 VERSION="2.3"
 
 # Java: будет найдена динамически
@@ -30,13 +30,13 @@ JAVA_BIN=""
 # Поиск Java
 # =====================
 find_java() {
-    # Приоритет: java-8 > java-17 > любая java в PATH
+    # Приоритет: java-8 > любая java в PATH
     local paths=(
         "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
         "/data/data/com.termux/files/usr/lib/jvm/java-8/bin/java"
         "$HOME/.jdk8/bin/java"
-        "/data/data/com.termux/files/usr/lib/jvm/java-17-openjdk/bin/java"
-        "/data/data/com.termux/files/usr/lib/jvm/java-17/bin/java"
+        "$HOME/jdk8u372-b07/bin/java"
+        "$PREFIX/opt/openjdk/bin/java"
     )
     for p in "${paths[@]}"; do
         if [ -x "$p" ]; then
@@ -282,22 +282,31 @@ EOF
 
 install_java() {
     echo ""
-    echo "=== Установка Java ==="
+    echo "=== Установка Java 8 ==="
     echo ""
 
-    # Способ 1: openjdk-17 (самый надёжный в современном Termux)
-    echo "[1/3] Пробую openjdk-17..."
-    pkg install -y openjdk-17
-    if find_java; then
-        echo ""
-        echo "OK: Java 17 найдена — $JAVA_BIN"
-        return 0
+    # Способ 1: Termux-Java от MasterDevX (рекомендуется для Java 8)
+    echo "[1/3] Пробую Termux-Java (MasterDevX)..."
+    if ! command -v wget &>/dev/null; then
+        echo "Устанавливаю wget..."
+        pkg install -y wget
+    fi
+    
+    local tmpscript="$HOME/.java8_install_tmp.sh"
+    if wget -O "$tmpscript" "$JAVA8_INSTALL_URL" 2>/dev/null; then
+        bash "$tmpscript"
+        rm -f "$tmpscript"
+        if find_java; then
+            echo ""
+            echo "OK: Java 8 установлена — $JAVA_BIN"
+            return 0
+        fi
     fi
 
     # Способ 2: openjdk-8 из tur-repo
     echo ""
     echo "[2/3] Пробую openjdk-8 (tur-repo)..."
-    pkg install -y tur-repo
+    pkg install -y tur-repo 2>/dev/null
     pkg install -y openjdk-8
     if find_java; then
         echo ""
@@ -308,10 +317,11 @@ install_java() {
     # Способ 3: альтернативный скрипт openjdk-8
     echo ""
     echo "[3/3] Пробую альтернативный установщик openjdk-8..."
+    local ALT_URL="https://raw.githubusercontent.com/nicola02nb/termux-openjdk-8/main/install.sh"
     if command -v curl &>/dev/null; then
-        curl -sL "$OPENJDK8_ALT_URL" | bash
+        curl -sL "$ALT_URL" | bash
     elif command -v wget &>/dev/null; then
-        wget -qO- "$OPENJDK8_ALT_URL" | bash
+        wget -qO- "$ALT_URL" | bash
     fi
     if find_java; then
         echo ""
@@ -320,9 +330,9 @@ install_java() {
     fi
 
     echo ""
-    echo "ОШИБКА: Не удалось установить Java!"
+    echo "ОШИБКА: Не удалось установить Java 8!"
     echo "Попробуй вручную:"
-    echo "  pkg install openjdk-17"
+    echo "  pkg install wget && wget https://raw.githubusercontent.com/MasterDevX/Termux-Java/master/installjava && bash installjava"
     echo "  или: pkg install openjdk-8"
     return 1
 }
