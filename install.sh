@@ -1,125 +1,65 @@
 #!/data/data/com.termux/files/usr/bin/bash
+
 # ============================================
 # MBSFT — Minecraft Beta Server For Termux
-# Самораспаковывающийся модульный установщик
+# Мульти-сервер менеджер (dialog UI)
 # ============================================
-
-export MBSFT_VERSION="2.4"
-export SCRIPT_URL="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh"
-export SCRIPT_PATH="$HOME/install.sh"
-export MODULES_DIR="$HOME/.mbsft/modules"
-
-# =====================
-# Самораспаковка модулей
-# =====================
-extract_modules() {
-    mkdir -p "$MODULES_DIR"
-    
-    # Извлекаем модули из этого скрипта
-    local extracting=0
-    local current_module=""
-    
-    while IFS= read -r line; do
-        if [[ "$line" == "### MODULE:"* ]]; then
-            current_module="${line#*: }"
-            extracting=1
-            > "$MODULES_DIR/$current_module"
-            continue
-        elif [[ "$line" == "### END_MODULE" ]]; then
-            extracting=0
-            chmod +x "$MODULES_DIR/$current_module"
-            current_module=""
-            continue
-        fi
-        
-        if [ $extracting -eq 1 ]; then
-            echo "$line" >> "$MODULES_DIR/$current_module"
-        fi
-    done < "$0"
-}
-
-# =====================
-# Автообновление
-# =====================
-auto_update() {
-    # Пропускаем если скрипт запущен из временного файла
-    if [[ "$0" == *".mbsft_"* ]] || [[ "$0" == "/tmp/"* ]]; then
-        return 0
-    fi
-    
-    # Проверяем наличие curl или wget
-    local downloader=""
-    if command -v curl &>/dev/null; then
-        downloader="curl"
-    elif command -v wget &>/dev/null; then
-        downloader="wget"
-    else
-        return 0
-    fi
-    
-    # Скачиваем новую версию
-    local tmp_script=$(mktemp "$HOME/.mbsft_update_XXXXXX.sh")
-    
-    if [ "$downloader" = "curl" ]; then
-        curl -sL "$SCRIPT_URL" -o "$tmp_script" 2>/dev/null || { rm -f "$tmp_script"; return 0; }
-    else
-        wget -qO "$tmp_script" "$SCRIPT_URL" 2>/dev/null || { rm -f "$tmp_script"; return 0; }
-    fi
-    
-    [ ! -s "$tmp_script" ] && { rm -f "$tmp_script"; return 0; }
-    
-    # Проверяем версию
-    local remote_version=$(grep '^export MBSFT_VERSION=' "$tmp_script" | head -1 | cut -d'"' -f2)
-    
-    if [ -n "$remote_version" ] && [ "$remote_version" != "$MBSFT_VERSION" ]; then
-        echo "╔════════════════════════════════════════╗"
-        echo "║   Обновление MBSFT                     ║"
-        echo "╚════════════════════════════════════════╝"
-        echo ""
-        echo "  Текущая версия:  $MBSFT_VERSION"
-        echo "  Новая версия:    $remote_version"
-        echo ""
-        echo "  Обновляю..."
-        
-        cp "$tmp_script" "$SCRIPT_PATH"
-        chmod +x "$SCRIPT_PATH"
-        rm -f "$tmp_script"
-        
-        echo "  ✓ Готово! Перезапускаю..."
-        sleep 2
-        exec bash "$SCRIPT_PATH" "$@"
-        exit 0
-    fi
-    
-    rm -f "$tmp_script"
-}
 
 # =====================
 # Fix: curl | bash
+# Если stdin — не терминал (пайп), сохраняем скрипт
+# во временный файл и перезапускаем из файла
 # =====================
 if [ ! -t 0 ]; then
-    cat > "$SCRIPT_PATH"
-    chmod +x "$SCRIPT_PATH"
-    echo ""
-    echo "╔════════════════════════════════════════╗"
-    echo "║   MBSFT установлен!                    ║"
-    echo "╚════════════════════════════════════════╝"
-    echo ""
-    echo "  Скрипт: $SCRIPT_PATH"
-    echo "  Запуск: bash install.sh"
-    echo ""
-    echo "  Запускаю..."
-    sleep 2
-    exec bash "$SCRIPT_PATH" "$@"
+    TMPSCRIPT=$(mktemp "$HOME/.mbsft_install_XXXXXX.sh")
+    cat > "$TMPSCRIPT"
+    exec bash "$TMPSCRIPT" "$@"
     exit
 fi
 
+# Пути
+BASE_DIR="$HOME/mbsft-servers"
+POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
+OPENJDK8_ALT_URL="https://raw.githubusercontent.com/nicola02nb/termux-openjdk-8/main/install.sh"
+VERSION="2.3"
+
+# Java: будет найдена динамически
+JAVA_BIN=""
+
 # =====================
-# Bootstrap
+# Поиск Java
+# =====================
+find_java() {
+    # Приоритет: java-8 > java-17 > любая java в PATH
+    local paths=(
+        "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
+        "/data/data/com.termux/files/usr/lib/jvm/java-8/bin/java"
+        "$HOME/.jdk8/bin/java"
+        "/data/data/com.termux/files/usr/lib/jvm/java-17-openjdk/bin/java"
+        "/data/data/com.termux/files/usr/lib/jvm/java-17/bin/java"
+    )
+    for p in "${paths[@]}"; do
+        if [ -x "$p" ]; then
+            JAVA_BIN="$p"
+            return 0
+        fi
+    done
+    # Последний шанс — java в PATH
+    if command -v java &>/dev/null; then
+        JAVA_BIN="$(command -v java)"
+        return 0
+    fi
+    return 1
+}
+
+# =====================
+# Bootstrap: dialog
 # =====================
 if ! command -v dialog &>/dev/null; then
     echo "[MBSFT] Устанавливаю dialog..."
-    pkg install -y dialog 2>/dev/null || apt install -y dialog 2>/dev/null
+    pkg install -y dialog 2>/dev/null || {
+        apt update -y 2>/dev/null && apt install -y dialog 2>/dev/null
+    }
 fi
 
 if ! command -v dialog &>/dev/null; then
@@ -127,109 +67,133 @@ if ! command -v dialog &>/dev/null; then
     exit 1
 fi
 
+# =====================
+# Тема dialog: чёрный фон, оранжевые акценты
+# =====================
+setup_dialog_theme() {
+    local rc="$HOME/.mbsft_dialogrc"
+    cat > "$rc" << 'THEOF'
+# MBSFT dialog theme — dark + orange
+aspect = 0
+separate_widget = ""
+tab_len = 0
+visit_items = ON
+use_shadow = ON
+use_colors = ON
+screen_color = (WHITE,BLACK,ON)
+shadow_color = (BLACK,BLACK,ON)
+dialog_color = (WHITE,BLACK,OFF)
+title_color = (YELLOW,BLACK,ON)
+border_color = (WHITE,BLACK,ON)
+border2_color = (WHITE,BLACK,ON)
+button_active_color = (BLACK,YELLOW,ON)
+button_inactive_color = (WHITE,BLACK,OFF)
+button_key_active_color = (BLACK,YELLOW,ON)
+button_key_inactive_color = (YELLOW,BLACK,OFF)
+button_label_active_color = (BLACK,YELLOW,ON)
+button_label_inactive_color = (WHITE,BLACK,OFF)
+inputbox_color = (WHITE,BLACK,OFF)
+inputbox_border_color = (YELLOW,BLACK,ON)
+inputbox_border2_color = (YELLOW,BLACK,ON)
+searchbox_color = (WHITE,BLACK,OFF)
+searchbox_title_color = (YELLOW,BLACK,ON)
+searchbox_border_color = (YELLOW,BLACK,ON)
+searchbox_border2_color = (YELLOW,BLACK,ON)
+position_indicator_color = (YELLOW,BLACK,ON)
+menubox_color = (WHITE,BLACK,OFF)
+menubox_border_color = (YELLOW,BLACK,ON)
+menubox_border2_color = (YELLOW,BLACK,ON)
+item_color = (WHITE,BLACK,OFF)
+item_selected_color = (BLACK,YELLOW,ON)
+tag_color = (YELLOW,BLACK,OFF)
+tag_selected_color = (BLACK,YELLOW,ON)
+tag_key_color = (YELLOW,BLACK,ON)
+tag_key_selected_color = (BLACK,YELLOW,ON)
+check_color = (WHITE,BLACK,OFF)
+check_selected_color = (BLACK,YELLOW,ON)
+uarrow_color = (YELLOW,BLACK,ON)
+darrow_color = (YELLOW,BLACK,ON)
+itemhelp_color = (WHITE,BLACK,OFF)
+form_active_text_color = (YELLOW,BLACK,ON)
+form_text_color = (WHITE,BLACK,OFF)
+form_item_readonly_color = (WHITE,BLACK,OFF)
+gauge_color = (YELLOW,BLACK,ON)
+THEOF
+    export DIALOGRC="$rc"
+}
+setup_dialog_theme
+
+# Проверка Termux
 if [ ! -d "/data/data/com.termux" ]; then
     dialog --title "Ошибка" --msgbox "Этот скрипт только для Termux!" 6 40
     exit 1
 fi
 
-# Запускаем автообновление
-auto_update "$@"
-
-# Распаковываем модули
-extract_modules
-
-# Загружаем модули
-source "$MODULES_DIR/core.sh"
-source "$MODULES_DIR/java.sh"
-source "$MODULES_DIR/server.sh"
-source "$MODULES_DIR/ui.sh"
-
-# Инициализация
-init_core
+mkdir -p "$BASE_DIR"
 find_java
 
-# Запускаем главное меню
-main_loop
-
-exit 0
-
-# ============================================
-# ВСТРОЕННЫЕ МОДУЛИ (не редактировать вручную)
-# ============================================
-
-
-### MODULE: core.sh
-#!/data/data/com.termux/files/usr/bin/bash
-# ============================================
-# MBSFT Core Module
-# Базовые переменные и утилиты
-# ============================================
-
-# Версия и пути
-export MBSFT_VERSION="2.4"
-export BASE_DIR="$HOME/mbsft-servers"
-export POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
-export JAVA8_INSTALL_SCRIPT="https://raw.githubusercontent.com/MasterDevX/Termux-Java/master/installjava"
-export SCRIPT_URL="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh"
-export SCRIPT_PATH="$HOME/install.sh"
-export MODULES_DIR="$HOME/.mbsft/modules"
-
-# Java путь (будет найден динамически)
-export JAVA_BIN=""
-
-# UI
-export TITLE="MBSFT v${MBSFT_VERSION}"
-
 # =====================
-# Утилиты для работы с сетью
+# Утилиты
 # =====================
 
+TITLE="MBSFT v${VERSION}"
+
+# Локальный IP (для подключения по Wi-Fi)
 get_local_ip() {
     local ip=""
-    # 1. net-tools (ifconfig)
-    if command -v ifconfig &>/dev/null; then
-        ip=$(ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}')
-        [ -z "$ip" ] && ip=$(ifconfig eth0 2>/dev/null | grep 'inet ' | awk '{print $2}')
-    fi
-    # 2. iproute2
+    # 1. ip route — самый надёжный способ в Linux/Termux
     if [ -z "$ip" ] && command -v ip &>/dev/null; then
-        ip=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
-        [ -z "$ip" ] && ip=$(ip addr show eth0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+        ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
     fi
-    # 3. termux-wifi-connectioninfo
+    # 2. ifconfig — проверяем все интерфейсы
+    if [ -z "$ip" ] && command -v ifconfig &>/dev/null; then
+        ip=$(ifconfig 2>/dev/null | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}' | sed 's/addr://')
+    fi
+    # 3. termux-wifi-connectioninfo (нужен termux-api)
     if [ -z "$ip" ] && command -v termux-wifi-connectioninfo &>/dev/null; then
         ip=$(termux-wifi-connectioninfo 2>/dev/null | grep '"ip"' | cut -d'"' -f4)
+        [ "$ip" = "0.0.0.0" ] && ip=""
+    fi
+    # 4. hostname -I
+    if [ -z "$ip" ] && command -v hostname &>/dev/null; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
     echo "${ip:-не определён}"
 }
 
+# Внешний IP (через интернет)
 get_external_ip() {
     local ip=""
     if command -v curl &>/dev/null; then
-        ip=$(curl -s --max-time 4 ifconfig.me 2>/dev/null)
+        ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+    elif command -v wget &>/dev/null; then
+        ip=$(wget -qO- --timeout=5 ifconfig.me 2>/dev/null)
     fi
-    echo "${ip:-не определён}"
+    # Проверяем что результат похож на IP
+    if echo "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo "$ip"
+    else
+        echo "не определён"
+    fi
 }
 
+# Основная функция — локальный IP (для Minecraft / SSH)
 get_ip() {
     get_local_ip
 }
 
-# =====================
-# Валидация
-# =====================
+deps_installed() {
+    find_java && command -v screen &>/dev/null && command -v wget &>/dev/null
+}
 
 validate_name() {
     echo "$1" | grep -qE '^[a-zA-Z0-9_-]+$'
 }
 
-# =====================
-# Конфигурация сервера
-# =====================
-
+# Конфиг сервера
 write_server_conf() {
     local dir="$1" name="$2" ram="$3" port="$4" core="$5"
-    cat > "$dir/.mbsft.conf" <<EOF
+    cat > "$dir/.mbsft.conf" << EOF
 NAME=$name
 RAM=$ram
 PORT=$port
@@ -247,10 +211,6 @@ read_server_conf() {
         RAM="1G"; PORT="25565"; CORE="unknown"; CREATED="?"
     fi
 }
-
-# =====================
-# Список серверов
-# =====================
 
 get_servers() {
     local servers=()
@@ -289,125 +249,7 @@ next_free_port() {
     echo "$port"
 }
 
-# =====================
-# Инициализация
-# =====================
-
-init_core() {
-    mkdir -p "$BASE_DIR"
-    mkdir -p "$MODULES_DIR"
-}
-### END_MODULE
-
-### MODULE: java.sh
-#!/data/data/com.termux/files/usr/bin/bash
-# ============================================
-# MBSFT Java Module
-# Управление Java
-# ============================================
-
-# =====================
-# Поиск Java
-# =====================
-find_java() {
-    # Приоритет: только Java 8
-    local paths=(
-        "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
-        "/data/data/com.termux/files/usr/lib/jvm/java-8/bin/java"
-        "$HOME/.jdk8/bin/java"
-        "$PREFIX/share/jdk8/bin/java"
-    )
-    for p in "${paths[@]}"; do
-        if [ -x "$p" ]; then
-            JAVA_BIN="$p"
-            return 0
-        fi
-    done
-    # Последний шанс — java в PATH (только если это Java 8)
-    if command -v java &>/dev/null; then
-        local java_ver=$(java -version 2>&1 | head -1)
-        if echo "$java_ver" | grep -q "1.8\|openjdk-8"; then
-            JAVA_BIN="$(command -v java)"
-            return 0
-        fi
-    fi
-    return 1
-}
-
-# =====================
-# Установка Java
-# =====================
-install_java() {
-    echo ""
-    echo "=== Установка Java 8 ==="
-    echo ""
-
-    # Способ 1: MasterDevX/Termux-Java (основной метод)
-    echo "[1/3] Устанавливаю Java 8 через Termux-Java..."
-    if ! command -v wget &>/dev/null; then
-        echo "Устанавливаю wget..."
-        pkg install -y wget
-    fi
-    
-    # Скачиваем и запускаем установщик
-    local tmpscript="/tmp/installjava_$$"
-    if wget -O "$tmpscript" "$JAVA8_INSTALL_SCRIPT" 2>/dev/null; then
-        bash "$tmpscript"
-        rm -f "$tmpscript"
-        if find_java; then
-            echo ""
-            echo "✓ OK: Java 8 установлена — $JAVA_BIN"
-            return 0
-        fi
-    fi
-
-    # Способ 2: openjdk-8 из tur-repo
-    echo ""
-    echo "[2/3] Пробую openjdk-8 (tur-repo)..."
-    pkg install -y tur-repo 2>/dev/null
-    pkg install -y openjdk-8
-    if find_java; then
-        echo ""
-        echo "✓ OK: Java 8 найдена — $JAVA_BIN"
-        return 0
-    fi
-
-    # Способ 3: прямая установка через pkg
-    echo ""
-    echo "[3/3] Пробую pkg install openjdk-8..."
-    pkg install -y openjdk-8
-    if find_java; then
-        echo ""
-        echo "✓ OK: Java 8 найдена — $JAVA_BIN"
-        return 0
-    fi
-
-    echo ""
-    echo "✗ ОШИБКА: Не удалось установить Java 8!"
-    echo "Попробуй вручную:"
-    echo "  pkg install wget && wget https://raw.githubusercontent.com/MasterDevX/Termux-Java/master/installjava && bash installjava"
-    echo "  или: pkg install tur-repo && pkg install openjdk-8"
-    return 1
-}
-
-# =====================
-# Проверка зависимостей
-# =====================
-deps_installed() {
-    find_java && command -v screen &>/dev/null && command -v wget &>/dev/null
-}
-### END_MODULE
-
-### MODULE: server.sh
-#!/data/data/com.termux/files/usr/bin/bash
-# ============================================
-# MBSFT Server Module
-# Управление серверами
-# ============================================
-
-# =====================
 # Патч конфигов сервера
-# =====================
 patch_server() {
     local sv_dir="$1" port="$2"
     if [ -f "$sv_dir/eula.txt" ]; then
@@ -421,13 +263,11 @@ patch_server() {
     fi
 }
 
-# =====================
-# Генерация start.sh
-# =====================
+# Генерация start.sh (использует найденную java)
 make_start_sh() {
     local sv_dir="$1" name="$2" ram="$3" port="$4"
     find_java
-    cat > "$sv_dir/start.sh" <<EOF
+    cat > "$sv_dir/start.sh" << EOF
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$sv_dir"
 echo "[$name] Запуск (RAM: $ram, Port: $port)..."
@@ -437,253 +277,119 @@ EOF
 }
 
 # =====================
-# Запуск сервера
+# 1. Зависимости
 # =====================
-server_start() {
-    local name="$1"
-    local sv_dir="$BASE_DIR/$name"
 
-    if is_server_running "$name"; then
-        dialog --title "$name" --msgbox "Уже запущен!" 6 30
-        return
-    fi
-    if [ ! -f "$sv_dir/server.jar" ]; then
-        dialog --title "$name" --msgbox "server.jar не найден!\nЗакинь в: $sv_dir/" 7 50
-        return
+install_java() {
+    echo ""
+    echo "=== Установка Java ==="
+    echo ""
+
+    # Способ 1: openjdk-17 (самый надёжный в современном Termux)
+    echo "[1/3] Пробую openjdk-17..."
+    pkg install -y openjdk-17
+    if find_java; then
+        echo ""
+        echo "OK: Java 17 найдена — $JAVA_BIN"
+        return 0
     fi
 
-    cd "$sv_dir"
-    screen -dmS "mbsft-${name}" ./start.sh
-    sleep 2
-
-    if is_server_running "$name"; then
-        local ip port
-        ip=$(get_local_ip)
-        port=$(get_actual_port "$sv_dir")
-        dialog --title "$name" --msgbox "Сервер запущен!\n\nПодключение: $ip:$port\nКонсоль: screen -r mbsft-${name}" 9 50
-    else
-        dialog --title "$name" --msgbox "Не удалось запустить.\nПроверь логи в $sv_dir/" 7 50
+    # Способ 2: openjdk-8 из tur-repo
+    echo ""
+    echo "[2/3] Пробую openjdk-8 (tur-repo)..."
+    pkg install -y tur-repo
+    pkg install -y openjdk-8
+    if find_java; then
+        echo ""
+        echo "OK: Java 8 найдена — $JAVA_BIN"
+        return 0
     fi
+
+    # Способ 3: альтернативный скрипт openjdk-8
+    echo ""
+    echo "[3/3] Пробую альтернативный установщик openjdk-8..."
+    if command -v curl &>/dev/null; then
+        curl -sL "$OPENJDK8_ALT_URL" | bash
+    elif command -v wget &>/dev/null; then
+        wget -qO- "$OPENJDK8_ALT_URL" | bash
+    fi
+    if find_java; then
+        echo ""
+        echo "OK: Java 8 найдена — $JAVA_BIN"
+        return 0
+    fi
+
+    echo ""
+    echo "ОШИБКА: Не удалось установить Java!"
+    echo "Попробуй вручную:"
+    echo "  pkg install openjdk-17"
+    echo "  или: pkg install openjdk-8"
+    return 1
 }
 
-# =====================
-# Остановка сервера
-# =====================
-server_stop() {
-    local name="$1"
-    if ! is_server_running "$name"; then
-        dialog --title "$name" --msgbox "Сервер не запущен." 6 34
-        return
-    fi
+check_deps_status() {
+    local result=""
+    local all_ok=true
 
-    screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
-    local tries=0
-    while is_server_running "$name" && [ $tries -lt 15 ]; do
-        sleep 1
-        tries=$((tries + 1))
-    done
-    is_server_running "$name" && screen -S "mbsft-${name}" -X quit 2>/dev/null
-
-    dialog --title "$name" --msgbox "Сервер остановлен." 6 34
-}
-
-# =====================
-# Остановка без диалога
-# =====================
-server_stop_silent() {
-    local name="$1"
-    is_server_running "$name" || return
-    screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
-    local tries=0
-    while is_server_running "$name" && [ $tries -lt 15 ]; do
-        sleep 1
-        tries=$((tries + 1))
-    done
-    is_server_running "$name" && screen -S "mbsft-${name}" -X quit 2>/dev/null
-}
-
-# =====================
-# Принудительная остановка
-# =====================
-server_force_stop() {
-    local name="$1"
-    if is_server_running "$name"; then
-        # Пытаемся graceful shutdown
-        screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
-        local tries=0
-        while is_server_running "$name" && [ $tries -lt 10 ]; do
-            sleep 1
-            tries=$((tries + 1))
-        done
-        # Если не остановился — убиваем
-        if is_server_running "$name"; then
-            screen -S "mbsft-${name}" -X quit 2>/dev/null
-            sleep 1
-        fi
-        # Последняя проверка
-        if is_server_running "$name"; then
-            # Убиваем процесс напрямую
-            pkill -f "mbsft-${name}" 2>/dev/null
-        fi
-    fi
-}
-
-# =====================
-# Консоль
-# =====================
-server_console() {
-    local name="$1"
-    if ! is_server_running "$name"; then
-        dialog --title "$name" --msgbox "Сервер не запущен!" 6 34
-        return
-    fi
-    dialog --title "$name" --msgbox "Откроется консоль.\n\nВыход: Ctrl+A, затем D" 8 40
-    screen -r "mbsft-${name}"
-}
-
-# =====================
-# Настройки
-# =====================
-server_settings() {
-    local name="$1"
-    local sv_dir="$BASE_DIR/$name"
-    read_server_conf "$sv_dir"
-
-    local actual_port
-    actual_port=$(get_actual_port "$sv_dir")
-    local online="?"
-    [ -f "$sv_dir/server.properties" ] && online=$(grep "online-mode=" "$sv_dir/server.properties" 2>/dev/null | cut -d= -f2)
-
-    local new_ram
-    new_ram=$(dialog --title "Настройки: $name" --menu "RAM (сейчас: $RAM):" 12 44 4 \
-        "512M" "Для слабых устройств" \
-        "1G"   "Рекомендуется" \
-        "2G"   "Для мощных устройств" \
-        "4G"   "Максимум" \
-        3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
-
-    local new_port
-    new_port=$(dialog --title "Настройки: $name" --inputbox "Порт (сейчас: $actual_port):" 8 40 "$actual_port" 3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
-
-    local new_online=false
-    dialog --title "Настройки: $name" --yesno "Включить online-mode?\n(Сейчас: $online)\n\nДа = лицензия нужна\nНет = пираты могут заходить" 10 44
-    [ $? -eq 0 ] && new_online=true
-
-    make_start_sh "$sv_dir" "$name" "$new_ram" "$new_port"
-
-    if [ -f "$sv_dir/server.properties" ]; then
-        sed -i "s/server-port=.*/server-port=$new_port/g" "$sv_dir/server.properties"
-        sed -i "s/online-mode=.*/online-mode=$new_online/g" "$sv_dir/server.properties"
-        sed -i "s/verify-names=.*/verify-names=$new_online/g" "$sv_dir/server.properties"
-        sed -i "s/server-ip=.*/server-ip=/g" "$sv_dir/server.properties"
-    fi
-    [ -f "$sv_dir/eula.txt" ] && sed -i 's/eula=false/eula=true/g' "$sv_dir/eula.txt"
-
-    write_server_conf "$sv_dir" "$name" "$new_ram" "$new_port" "$CORE"
-
-    dialog --title "$name" --msgbox "Настройки обновлены!\n\nRAM: $new_ram\nПорт: $new_port\nonline-mode: $new_online\n\nПерезапусти сервер." 11 40
-}
-
-# =====================
-# Создание сервиса
-# =====================
-server_create_service() {
-    local name="$1"
-    local sv_dir="$BASE_DIR/$name"
-    local sv_service="mbsft-${name}"
-    local SVDIR="$PREFIX/var/service/$sv_service"
-
-    mkdir -p "$SVDIR/log"
-
-    cat > "$SVDIR/run" <<SEOF
-#!/data/data/com.termux/files/usr/bin/sh
-cd "$sv_dir"
-(
-    while true; do
-        sleep 600
-        screen -S "mbsft-${name}" -p 0 -X stuff "save-all\$(printf \\\\r)" 2>/dev/null
-    done
-) &
-SAVE_PID=\$!
-trap "kill \$SAVE_PID 2>/dev/null" EXIT TERM INT
-exec screen -DmS "mbsft-${name}" ./start.sh
-SEOF
-    chmod +x "$SVDIR/run"
-
-    cat > "$SVDIR/log/run" <<LEOF
-#!/data/data/com.termux/files/usr/bin/sh
-mkdir -p "$sv_dir/logs/sv"
-exec svlogd -tt "$sv_dir/logs/sv"
-LEOF
-    chmod +x "$SVDIR/log/run"
-    command -v sv-enable &>/dev/null && sv-enable "$sv_service" 2>/dev/null || true
-
-    dialog --title "$name" --msgbox "Сервис '$sv_service' создан!\n\nАвтозапуск + автосохранение\n\nУправление:\n  sv up $sv_service\n  sv down $sv_service" 12 48
-}
-
-# =====================
-# Удаление сервера (с принудительной остановкой)
-# =====================
-server_delete() {
-    local name="$1"
-    local sv_dir="$BASE_DIR/$name"
-
-    dialog --title "УДАЛЕНИЕ" --yesno "Удалить сервер '$name' и ВСЕ его файлы?\n\n$sv_dir" 8 50
-    [ $? -ne 0 ] && return 1
-
-    local confirm
-    confirm=$(dialog --title "ПОДТВЕРЖДЕНИЕ" --inputbox "Введи имя сервера для подтверждения:" 8 50 "" 3>&1 1>&2 2>&3)
-    if [ "$confirm" != "$name" ]; then
-        dialog --title "$TITLE" --msgbox "Отменено." 6 24
-        return 1
-    fi
-
-    # ИСПРАВЛЕНИЕ: Принудительная остановка сервера
-    if is_server_running "$name"; then
-        dialog --title "УДАЛЕНИЕ" --infobox "Останавливаю сервер '$name'..." 5 40
-        server_force_stop "$name"
-        sleep 2
-    fi
-
-    # Удаляем сервис если есть
-    local sv_service="mbsft-${name}"
-    if [ -d "$PREFIX/var/service/$sv_service" ]; then
-        sv down "$sv_service" 2>/dev/null || true
-        command -v sv-disable &>/dev/null && sv-disable "$sv_service" 2>/dev/null || true
-        rm -rf "$PREFIX/var/service/$sv_service"
-    fi
-
-    # Удаляем папку сервера
-    rm -rf "$sv_dir"
-    
-    dialog --title "$TITLE" --msgbox "Сервер '$name' удалён.\n\nВсе процессы остановлены." 7 38
-    return 0
-}
-### END_MODULE
-
-### MODULE: ui.sh
-#!/data/data/com.termux/files/usr/bin/bash
-# ============================================
-# MBSFT UI Module
-# Dialog интерфейс и меню
-# ============================================
-
-# =====================
-# Установка зависимостей
-# =====================
-step_deps() {
-    if deps_installed; then
+    # Java
+    if find_java; then
         local jver
         jver=$("$JAVA_BIN" -version 2>&1 | head -1)
-        dialog --title "$TITLE" --msgbox "Всё уже установлено!\n\nJava: $jver\nПуть: $JAVA_BIN\nscreen: $(which screen)\nwget: $(which wget)" 12 56
-        return
+        result+="Java:           OK  ($jver)\n"
+    else
+        result+="Java:           НЕТ\n"
+        all_ok=false
     fi
 
-    dialog --title "$TITLE" --yesno "Установить зависимости?\n\n• Java 8 (OpenJDK 8)\n• screen, wget\n• openssh, iproute2, net-tools\n• termux-services" 12 46
-    [ $? -ne 0 ] && return
+    # screen
+    if command -v screen &>/dev/null; then
+        result+="screen:         OK\n"
+    else
+        result+="screen:         НЕТ\n"
+        all_ok=false
+    fi
 
+    # wget
+    if command -v wget &>/dev/null; then
+        result+="wget:           OK\n"
+    else
+        result+="wget:           НЕТ\n"
+        all_ok=false
+    fi
+
+    # openssh
+    if command -v sshd &>/dev/null; then
+        result+="openssh:        OK\n"
+    else
+        result+="openssh:        НЕТ\n"
+    fi
+
+    # iproute2
+    if command -v ip &>/dev/null; then
+        result+="iproute2 (ip):  OK\n"
+    else
+        result+="iproute2 (ip):  НЕТ\n"
+    fi
+
+    # net-tools
+    if command -v ifconfig &>/dev/null; then
+        result+="net-tools:      OK\n"
+    else
+        result+="net-tools:      НЕТ\n"
+    fi
+
+    # IP check
+    local lip eip
+    lip=$(get_local_ip)
+    eip=$(get_external_ip)
+    result+="\nЛокальный IP:   $lip\n"
+    result+="Внешний IP:     $eip\n"
+
+    echo -e "$result"
+    $all_ok
+}
+
+run_install_deps() {
     clear
     echo "=== Установка зависимостей ==="
     echo ""
@@ -695,20 +401,20 @@ step_deps() {
 
     echo ""
     echo "--- Сетевые утилиты ---"
+    pkg install -y iproute2
     pkg install -y net-tools
     if ! command -v ifconfig &>/dev/null; then
         echo "ВНИМАНИЕ: net-tools не установился, пробую ещё раз..."
         apt install -y net-tools
     fi
-    pkg install -y iproute2 2>/dev/null
 
     echo ""
     install_java
     local java_ok=$?
 
-    # Проверка
     echo ""
     echo "=== Результат ==="
+    command -v ip &>/dev/null       && echo "  ip:        OK" || echo "  ip:        НЕТ"
     command -v ifconfig &>/dev/null && echo "  ifconfig:  OK" || echo "  ifconfig:  НЕТ"
     command -v screen &>/dev/null   && echo "  screen:    OK" || echo "  screen:    НЕТ"
     command -v wget &>/dev/null     && echo "  wget:      OK" || echo "  wget:      НЕТ"
@@ -718,9 +424,37 @@ step_deps() {
     read -r
 }
 
+step_deps() {
+    while true; do
+        local status_text
+        status_text=$(check_deps_status)
+        local all_ok=$?
+
+        local choice
+        choice=$(dialog --title "Зависимости" \
+            --menu "$status_text" 22 58 4 \
+            "install" "Установить всё" \
+            "check"   "Повторная проверка" \
+            "---"     "─────────────────────" \
+            "back"    "Назад" \
+            3>&1 1>&2 2>&3)
+
+        case $? in
+            1|255) return ;;
+        esac
+
+        case $choice in
+            install) run_install_deps ;;
+            check)   continue ;;  # просто обновит статус при следующей итерации
+            back)    return ;;
+        esac
+    done
+}
+
 # =====================
-# Создание сервера
+# 2. Создание сервера
 # =====================
+
 create_server() {
     if ! deps_installed; then
         dialog --title "$TITLE" --msgbox "Сначала установи зависимости!" 6 44
@@ -800,8 +534,9 @@ create_server() {
 }
 
 # =====================
-# Быстрое создание
+# 3. Быстрое создание
 # =====================
+
 quick_create() {
     if ! deps_installed; then
         dialog --title "$TITLE" --yesno "Зависимости не установлены.\nУстановить сейчас?" 7 44
@@ -872,8 +607,9 @@ quick_create() {
 }
 
 # =====================
-# Список серверов
+# 4. Мои серверы
 # =====================
+
 list_servers_menu() {
     while true; do
         local servers
@@ -906,6 +642,7 @@ list_servers_menu() {
 # =====================
 # Управление сервером
 # =====================
+
 server_manage_menu() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
@@ -943,9 +680,185 @@ server_manage_menu() {
     done
 }
 
+server_start() {
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+
+    if is_server_running "$name"; then
+        dialog --title "$name" --msgbox "Уже запущен!" 6 30
+        return
+    fi
+    if [ ! -f "$sv_dir/server.jar" ]; then
+        dialog --title "$name" --msgbox "server.jar не найден!\nЗакинь в: $sv_dir/" 7 50
+        return
+    fi
+
+    cd "$sv_dir"
+    screen -dmS "mbsft-${name}" ./start.sh
+    sleep 2
+
+    if is_server_running "$name"; then
+        local ip port
+        ip=$(get_local_ip)
+        port=$(get_actual_port "$sv_dir")
+        dialog --title "$name" --msgbox "Сервер запущен!\n\nПодключение: $ip:$port\nКонсоль: screen -r mbsft-${name}" 9 50
+    else
+        dialog --title "$name" --msgbox "Не удалось запустить.\nПроверь логи в $sv_dir/" 7 50
+    fi
+}
+
+server_stop() {
+    local name="$1"
+    if ! is_server_running "$name"; then
+        dialog --title "$name" --msgbox "Сервер не запущен." 6 34
+        return
+    fi
+
+    screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
+    local tries=0
+    while is_server_running "$name" && [ $tries -lt 15 ]; do
+        sleep 1
+        tries=$((tries + 1))
+    done
+    is_server_running "$name" && screen -S "mbsft-${name}" -X quit 2>/dev/null
+
+    dialog --title "$name" --msgbox "Сервер остановлен." 6 34
+}
+
+server_stop_silent() {
+    local name="$1"
+    is_server_running "$name" || return
+    screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
+    local tries=0
+    while is_server_running "$name" && [ $tries -lt 15 ]; do
+        sleep 1
+        tries=$((tries + 1))
+    done
+    is_server_running "$name" && screen -S "mbsft-${name}" -X quit 2>/dev/null
+}
+
+server_console() {
+    local name="$1"
+    if ! is_server_running "$name"; then
+        dialog --title "$name" --msgbox "Сервер не запущен!" 6 34
+        return
+    fi
+    dialog --title "$name" --msgbox "Откроется консоль.\n\nВыход: Ctrl+A, затем D" 8 40
+    screen -r "mbsft-${name}"
+}
+
+server_settings() {
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+    read_server_conf "$sv_dir"
+
+    local actual_port
+    actual_port=$(get_actual_port "$sv_dir")
+    local online="?"
+    [ -f "$sv_dir/server.properties" ] && online=$(grep "online-mode=" "$sv_dir/server.properties" 2>/dev/null | cut -d= -f2)
+
+    local new_ram
+    new_ram=$(dialog --title "Настройки: $name" --menu "RAM (сейчас: $RAM):" 12 44 4 \
+        "512M" "Для слабых устройств" \
+        "1G"   "Рекомендуется" \
+        "2G"   "Для мощных устройств" \
+        "4G"   "Максимум" \
+        3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
+
+    local new_port
+    new_port=$(dialog --title "Настройки: $name" --inputbox "Порт (сейчас: $actual_port):" 8 40 "$actual_port" 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
+
+    local new_online=false
+    dialog --title "Настройки: $name" --yesno "Включить online-mode?\n(Сейчас: $online)\n\nДа = лицензия нужна\nНет = пираты могут заходить" 10 44
+    [ $? -eq 0 ] && new_online=true
+
+    make_start_sh "$sv_dir" "$name" "$new_ram" "$new_port"
+
+    if [ -f "$sv_dir/server.properties" ]; then
+        sed -i "s/server-port=.*/server-port=$new_port/g" "$sv_dir/server.properties"
+        sed -i "s/online-mode=.*/online-mode=$new_online/g" "$sv_dir/server.properties"
+        sed -i "s/verify-names=.*/verify-names=$new_online/g" "$sv_dir/server.properties"
+        sed -i "s/server-ip=.*/server-ip=/g" "$sv_dir/server.properties"
+    fi
+    [ -f "$sv_dir/eula.txt" ] && sed -i 's/eula=false/eula=true/g' "$sv_dir/eula.txt"
+
+    write_server_conf "$sv_dir" "$name" "$new_ram" "$new_port" "$CORE"
+
+    dialog --title "$name" --msgbox "Настройки обновлены!\n\nRAM: $new_ram\nПорт: $new_port\nonline-mode: $new_online\n\nПерезапусти сервер." 11 40
+}
+
+server_create_service() {
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+    local sv_service="mbsft-${name}"
+    local SVDIR="$PREFIX/var/service/$sv_service"
+
+    mkdir -p "$SVDIR/log"
+
+    cat > "$SVDIR/run" << SEOF
+#!/data/data/com.termux/files/usr/bin/sh
+cd "$sv_dir"
+(
+    while true; do
+        sleep 600
+        screen -S "mbsft-${name}" -p 0 -X stuff "save-all\$(printf \\\\r)" 2>/dev/null
+    done
+) &
+SAVE_PID=\$!
+trap "kill \$SAVE_PID 2>/dev/null" EXIT TERM INT
+exec screen -DmS "mbsft-${name}" ./start.sh
+SEOF
+    chmod +x "$SVDIR/run"
+
+    cat > "$SVDIR/log/run" << LEOF
+#!/data/data/com.termux/files/usr/bin/sh
+mkdir -p "$sv_dir/logs/sv"
+exec svlogd -tt "$sv_dir/logs/sv"
+LEOF
+    chmod +x "$SVDIR/log/run"
+    command -v sv-enable &>/dev/null && sv-enable "$sv_service" 2>/dev/null || true
+
+    dialog --title "$name" --msgbox "Сервис '$sv_service' создан!\n\nАвтозапуск + автосохранение\n\nУправление:\n  sv up $sv_service\n  sv down $sv_service" 12 48
+}
+
+server_delete() {
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+
+    dialog --title "УДАЛЕНИЕ" --yesno "Удалить сервер '$name' и ВСЕ его файлы?\n\n$sv_dir" 8 50
+    [ $? -ne 0 ] && return 1
+
+    local confirm
+    confirm=$(dialog --title "ПОДТВЕРЖДЕНИЕ" --inputbox "Введи имя сервера для подтверждения:" 8 50 "" 3>&1 1>&2 2>&3)
+    if [ "$confirm" != "$name" ]; then
+        dialog --title "$TITLE" --msgbox "Отменено." 6 24
+        return 1
+    fi
+
+    is_server_running "$name" && {
+        screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
+        sleep 3
+        screen -S "mbsft-${name}" -X quit 2>/dev/null
+    }
+
+    local sv_service="mbsft-${name}"
+    if [ -d "$PREFIX/var/service/$sv_service" ]; then
+        sv down "$sv_service" 2>/dev/null || true
+        command -v sv-disable &>/dev/null && sv-disable "$sv_service" 2>/dev/null || true
+        rm -rf "$PREFIX/var/service/$sv_service"
+    fi
+
+    rm -rf "$sv_dir"
+    dialog --title "$TITLE" --msgbox "Сервер '$name' удалён." 6 38
+    return 0
+}
+
 # =====================
-# Дашборд
+# 5. Дашборд
 # =====================
+
 dashboard() {
     local local_ip ext_ip
     local_ip=$(get_local_ip)
@@ -987,8 +900,9 @@ dashboard() {
 }
 
 # =====================
-# SSH
+# 6. SSH
 # =====================
+
 step_ssh() {
     dialog --title "SSH" --yesno "Настроить SSH доступ?\n\nПосле этого сможешь управлять\nсервером с ПК через терминал." 9 44
     [ $? -ne 0 ] && return
@@ -1014,6 +928,7 @@ step_ssh() {
 # =====================
 # Главное меню
 # =====================
+
 main_loop() {
     while true; do
         local servers
@@ -1060,4 +975,8 @@ main_loop() {
 
     clear
 }
-### END_MODULE
+
+# =====================
+# Main
+# =====================
+main_loop
