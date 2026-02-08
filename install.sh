@@ -21,7 +21,7 @@ fi
 BASE_DIR="$HOME/mbsft-servers"
 POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
 OPENJDK8_ALT_URL="https://raw.githubusercontent.com/nicola02nb/termux-openjdk-8/main/install.sh"
-VERSION="2.2"
+VERSION="2.3"
 
 # Java: будет найдена динамически
 JAVA_BIN=""
@@ -67,6 +67,62 @@ if ! command -v dialog &>/dev/null; then
     exit 1
 fi
 
+# =====================
+# Тема dialog: чёрный фон, оранжевые акценты
+# =====================
+setup_dialog_theme() {
+    local rc="$HOME/.mbsft_dialogrc"
+    cat > "$rc" << 'THEOF'
+# MBSFT dialog theme — dark + orange
+aspect = 0
+separate_widget = ""
+tab_len = 0
+visit_items = ON
+use_shadow = ON
+use_colors = ON
+screen_color = (WHITE,BLACK,ON)
+shadow_color = (BLACK,BLACK,ON)
+dialog_color = (WHITE,BLACK,OFF)
+title_color = (YELLOW,BLACK,ON)
+border_color = (WHITE,BLACK,ON)
+border2_color = (WHITE,BLACK,ON)
+button_active_color = (BLACK,YELLOW,ON)
+button_inactive_color = (WHITE,BLACK,OFF)
+button_key_active_color = (BLACK,YELLOW,ON)
+button_key_inactive_color = (YELLOW,BLACK,OFF)
+button_label_active_color = (BLACK,YELLOW,ON)
+button_label_inactive_color = (WHITE,BLACK,OFF)
+inputbox_color = (WHITE,BLACK,OFF)
+inputbox_border_color = (YELLOW,BLACK,ON)
+inputbox_border2_color = (YELLOW,BLACK,ON)
+searchbox_color = (WHITE,BLACK,OFF)
+searchbox_title_color = (YELLOW,BLACK,ON)
+searchbox_border_color = (YELLOW,BLACK,ON)
+searchbox_border2_color = (YELLOW,BLACK,ON)
+position_indicator_color = (YELLOW,BLACK,ON)
+menubox_color = (WHITE,BLACK,OFF)
+menubox_border_color = (YELLOW,BLACK,ON)
+menubox_border2_color = (YELLOW,BLACK,ON)
+item_color = (WHITE,BLACK,OFF)
+item_selected_color = (BLACK,YELLOW,ON)
+tag_color = (YELLOW,BLACK,OFF)
+tag_selected_color = (BLACK,YELLOW,ON)
+tag_key_color = (YELLOW,BLACK,ON)
+tag_key_selected_color = (BLACK,YELLOW,ON)
+check_color = (WHITE,BLACK,OFF)
+check_selected_color = (BLACK,YELLOW,ON)
+uarrow_color = (YELLOW,BLACK,ON)
+darrow_color = (YELLOW,BLACK,ON)
+itemhelp_color = (WHITE,BLACK,OFF)
+form_active_text_color = (YELLOW,BLACK,ON)
+form_text_color = (WHITE,BLACK,OFF)
+form_item_readonly_color = (WHITE,BLACK,OFF)
+gauge_color = (YELLOW,BLACK,ON)
+THEOF
+    export DIALOGRC="$rc"
+}
+setup_dialog_theme
+
 # Проверка Termux
 if [ ! -d "/data/data/com.termux" ]; then
     dialog --title "Ошибка" --msgbox "Этот скрипт только для Termux!" 6 40
@@ -85,30 +141,40 @@ TITLE="MBSFT v${VERSION}"
 # Локальный IP (для подключения по Wi-Fi)
 get_local_ip() {
     local ip=""
-    # 1. net-tools (ifconfig) — ставим принудительно в deps
-    if command -v ifconfig &>/dev/null; then
-        ip=$(ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}')
-        [ -z "$ip" ] && ip=$(ifconfig eth0 2>/dev/null | grep 'inet ' | awk '{print $2}')
-    fi
-    # 2. iproute2
+    # 1. ip route — самый надёжный способ в Linux/Termux
     if [ -z "$ip" ] && command -v ip &>/dev/null; then
-        ip=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
-        [ -z "$ip" ] && ip=$(ip addr show eth0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+        ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
     fi
-    # 3. termux-wifi-connectioninfo
+    # 2. ifconfig — проверяем все интерфейсы
+    if [ -z "$ip" ] && command -v ifconfig &>/dev/null; then
+        ip=$(ifconfig 2>/dev/null | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}' | sed 's/addr://')
+    fi
+    # 3. termux-wifi-connectioninfo (нужен termux-api)
     if [ -z "$ip" ] && command -v termux-wifi-connectioninfo &>/dev/null; then
         ip=$(termux-wifi-connectioninfo 2>/dev/null | grep '"ip"' | cut -d'"' -f4)
+        [ "$ip" = "0.0.0.0" ] && ip=""
+    fi
+    # 4. hostname -I
+    if [ -z "$ip" ] && command -v hostname &>/dev/null; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
     echo "${ip:-не определён}"
 }
 
-# Внешний IP
+# Внешний IP (через интернет)
 get_external_ip() {
     local ip=""
     if command -v curl &>/dev/null; then
-        ip=$(curl -s --max-time 4 ifconfig.me 2>/dev/null)
+        ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+    elif command -v wget &>/dev/null; then
+        ip=$(wget -qO- --timeout=5 ifconfig.me 2>/dev/null)
     fi
-    echo "${ip:-не определён}"
+    # Проверяем что результат похож на IP
+    if echo "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo "$ip"
+    else
+        echo "не определён"
+    fi
 }
 
 # Основная функция — локальный IP (для Minecraft / SSH)
@@ -261,17 +327,69 @@ install_java() {
     return 1
 }
 
-step_deps() {
-    if deps_installed; then
+check_deps_status() {
+    local result=""
+    local all_ok=true
+
+    # Java
+    if find_java; then
         local jver
         jver=$("$JAVA_BIN" -version 2>&1 | head -1)
-        dialog --title "$TITLE" --msgbox "Всё уже установлено!\n\nJava: $jver\nПуть: $JAVA_BIN\nscreen: $(which screen)\nwget: $(which wget)" 12 56
-        return
+        result+="Java:           OK  ($jver)\n"
+    else
+        result+="Java:           НЕТ\n"
+        all_ok=false
     fi
 
-    dialog --title "$TITLE" --yesno "Установить зависимости?\n\n• Java (OpenJDK 8 / 17)\n• screen, wget\n• openssh, iproute2, net-tools\n• termux-services" 12 46
-    [ $? -ne 0 ] && return
+    # screen
+    if command -v screen &>/dev/null; then
+        result+="screen:         OK\n"
+    else
+        result+="screen:         НЕТ\n"
+        all_ok=false
+    fi
 
+    # wget
+    if command -v wget &>/dev/null; then
+        result+="wget:           OK\n"
+    else
+        result+="wget:           НЕТ\n"
+        all_ok=false
+    fi
+
+    # openssh
+    if command -v sshd &>/dev/null; then
+        result+="openssh:        OK\n"
+    else
+        result+="openssh:        НЕТ\n"
+    fi
+
+    # iproute2
+    if command -v ip &>/dev/null; then
+        result+="iproute2 (ip):  OK\n"
+    else
+        result+="iproute2 (ip):  НЕТ\n"
+    fi
+
+    # net-tools
+    if command -v ifconfig &>/dev/null; then
+        result+="net-tools:      OK\n"
+    else
+        result+="net-tools:      НЕТ\n"
+    fi
+
+    # IP check
+    local lip eip
+    lip=$(get_local_ip)
+    eip=$(get_external_ip)
+    result+="\nЛокальный IP:   $lip\n"
+    result+="Внешний IP:     $eip\n"
+
+    echo -e "$result"
+    $all_ok
+}
+
+run_install_deps() {
     clear
     echo "=== Установка зависимостей ==="
     echo ""
@@ -283,20 +401,20 @@ step_deps() {
 
     echo ""
     echo "--- Сетевые утилиты ---"
+    pkg install -y iproute2
     pkg install -y net-tools
     if ! command -v ifconfig &>/dev/null; then
         echo "ВНИМАНИЕ: net-tools не установился, пробую ещё раз..."
         apt install -y net-tools
     fi
-    pkg install -y iproute2 2>/dev/null
 
     echo ""
     install_java
     local java_ok=$?
 
-    # Проверка
     echo ""
     echo "=== Результат ==="
+    command -v ip &>/dev/null       && echo "  ip:        OK" || echo "  ip:        НЕТ"
     command -v ifconfig &>/dev/null && echo "  ifconfig:  OK" || echo "  ifconfig:  НЕТ"
     command -v screen &>/dev/null   && echo "  screen:    OK" || echo "  screen:    НЕТ"
     command -v wget &>/dev/null     && echo "  wget:      OK" || echo "  wget:      НЕТ"
@@ -304,6 +422,33 @@ step_deps() {
     echo ""
     echo "Нажми Enter..."
     read -r
+}
+
+step_deps() {
+    while true; do
+        local status_text
+        status_text=$(check_deps_status)
+        local all_ok=$?
+
+        local choice
+        choice=$(dialog --title "Зависимости" \
+            --menu "$status_text" 22 58 4 \
+            "install" "Установить всё" \
+            "check"   "Повторная проверка" \
+            "---"     "─────────────────────" \
+            "back"    "Назад" \
+            3>&1 1>&2 2>&3)
+
+        case $? in
+            1|255) return ;;
+        esac
+
+        case $choice in
+            install) run_install_deps ;;
+            check)   continue ;;  # просто обновит статус при следующей итерации
+            back)    return ;;
+        esac
+    done
 }
 
 # =====================
