@@ -1347,9 +1347,33 @@ uninstall_all() {
 # Главное меню
 # =====================
 
+kill_zombie_loops() {
+    # Находим PID всех процессов sleep 600
+    local sleeps
+    sleeps=$(pgrep -f "sleep 600")
+    
+    if [ -n "$sleeps" ]; then
+        for pid in $sleeps; do
+            # Находим Parent PID (родителя, который крутит цикл)
+            local ppid
+            # ps -o ppid= выводит только число. tr -d ' ' убирает пробелы
+            ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+            
+            if [ -n "$ppid" ] && [ "$ppid" -gt 1 ]; then
+                 # Проверяем, что это не init и не сам скрипт (на всякий случай)
+                 # Убиваем родителя - это остановит цикл
+                 kill -9 "$ppid" 2>/dev/null
+            fi
+            # Убиваем сам sleep
+            kill -9 "$pid" 2>/dev/null
+        done
+    fi
+}
+
 main_loop() {
-    # Очистка мусорных процессов sleep от старых сервисов
-    pkill -f "sleep 600" 2>/dev/null
+    # Очистка мусорных процессов (умная)
+    kill_zombie_loops
+    pkill -f "sleep 600" 2>/dev/null # Добиваем остатки
 
     while true; do
         local servers
