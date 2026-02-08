@@ -1017,13 +1017,14 @@ server_delete() {
 # =====================
 
 dashboard() {
-    local local_ip ext_ip
-    local_ip=$(get_local_ip)
-    ext_ip=$(get_external_ip)
+    local local_ip="${CACHED_LOCAL_IP:-$(get_local_ip)}"
+    local ext_ip="${CACHED_EXT_IP:-$(get_external_ip)}"
 
     local java_status="НЕ УСТАНОВЛЕНА"
     if find_java; then
-        java_status="$($JAVA_BIN -version 2>&1 | head -1)"
+        # Если кэш пуст, наполняем (хотя find_java должен был это сделать)
+        [ -z "$_CACHED_JVER" ] && _CACHED_JVER="$($JAVA_BIN -version 2>&1 | head -1)"
+        java_status="$_CACHED_JVER"
     fi
 
     local ssh_status="выкл"
@@ -1074,8 +1075,8 @@ step_ssh() {
 
     local user local_ip ext_ip
     user=$(whoami)
-    local_ip=$(get_local_ip)
-    ext_ip=$(get_external_ip)
+    local_ip="${CACHED_LOCAL_IP:-$(get_local_ip)}"
+    ext_ip="${CACHED_EXT_IP:-$(get_external_ip)}"
     echo "Готово! Нажми Enter..."
     read -r
 
@@ -1135,4 +1136,11 @@ main_loop() {
 # =====================
 # Main
 # =====================
+# Оптимизация: Предварительный поиск IP (кэш), чтобы не тормозить в меню
+echo "Проверка сети..."
+CACHED_LOCAL_IP=$(get_local_ip)
+# Внешний IP может быть долгим, запустим его в фоне и закэшируем (или синхронно с таймаутом)
+# Лучше синхронно, чтобы пользователь видел статус, но с коротким таймаутом
+CACHED_EXT_IP=$(get_external_ip)
+
 main_loop
