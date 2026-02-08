@@ -19,10 +19,8 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
 JDK8_AARCH64_URL="https://github.com/Hax4us/java/releases/download/v8/jdk8_aarch64.tar.gz"
 JDK8_ARM_URL="https://github.com/Hax4us/java/releases/download/v8-151/jdk8_arm.tar.gz"
-VERSION="2.3"
 
 # Java: будет найдена динамически
 JAVA_BIN=""
@@ -292,7 +290,8 @@ EOF
 
 install_java() {
     echo ""
-    echo "=== Установка Java 8 (Hax4us) ==="
+    echo "=== Установка Java 8 (Hax4us + Patch) ==="
+    echo "Используем нативную сборку с патчем совместимости библиотек."
     echo ""
 
     # Определение архитектуры
@@ -305,17 +304,16 @@ install_java() {
             echo "Архитектура: aarch64"
             download_url="$JDK8_AARCH64_URL"
             ;;
-        arm*|abc) # armv7l, armv8l и т.д.
+        arm*|abc)
             echo "Архитектура: arm ($arch)"
             download_url="$JDK8_ARM_URL"
             ;;
         *)
-            echo "ОШИБКА: Архитектура '$arch' не поддерживается для авто-установки Java 8."
+            echo "ОШИБКА: Архитектура '$arch' не поддерживается."
             return 1
             ;;
     esac
 
-    # Проверка wget
     if ! command -v wget &>/dev/null; then
         echo "Устанавливаю wget..."
         pkg install -y wget
@@ -325,75 +323,85 @@ install_java() {
     local install_dir="$PREFIX/share"
     local jdk_dir="$install_dir/jdk8"
 
-    echo "[1/4] Скачивание JDK 8..."
+    echo "[1/5] Скачивание JDK 8..."
     if ! wget -O "$tmp_jdk" "$download_url"; then
         echo "ОШИБКА: Не удалось скачать Java!"
         rm -f "$tmp_jdk"
         return 1
     fi
 
-    echo "[2/4] Распаковка..."
+    echo "[2/5] Распаковка..."
     mkdir -p "$install_dir"
-    # Удаляем старую версию если есть
     rm -rf "$jdk_dir"
     
     if ! tar -xf "$tmp_jdk" -C "$install_dir"; then
-        echo "ОШИБКА: Кривой архив (не распаковался)."
+        echo "ОШИБКА: Архив поврежден."
         rm -f "$tmp_jdk"
         return 1
     fi
     rm -f "$tmp_jdk"
 
-    # Hax4us архив обычно распаковывается как 'jdk8', но проверим
-    # Если папка называется иначе, нужно найти её
-    # В архивах Hax4us папка обычно `jdk8`
-    
+    # Проверка папки распаковки
     if [ ! -d "$jdk_dir" ]; then
-        # Попытка найти, если имя отличается
         local found_dir
         found_dir=$(find "$install_dir" -maxdepth 1 -type d -name "jdk8*" | head -1)
         if [ -n "$found_dir" ]; then
             jdk_dir="$found_dir"
         else
-            echo "ОШИБКА: Не найдена папка jdk8 после распаковки."
+            echo "ОШИБКА: Не найдена папка jdk8."
             return 1
         fi
     fi
 
-    echo "[3/4] Настройка прав и путей..."
+    echo "[3/5] Применение патчей совместимости..."
+    # FIX: libpthread.so.0 (glibc) -> libc.so (bionic)
+    # Это ключевой момент для запуска этой сборки на новых Android
+    if [ ! -f "$PREFIX/lib/libpthread.so.0" ]; then
+        echo "  -> Создаю симлинк libpthread.so.0..."
+        ln -s "$PREFIX/lib/libc.so" "$PREFIX/lib/libpthread.so.0"
+    fi
+    
+    # FIX: libz.so.1 (на всякий случай)
+    if [ ! -f "$PREFIX/lib/libz.so.1" ] && [ -f "$PREFIX/lib/libz.so" ]; then
+         echo "  -> Создаю симлинк libz.so.1..."
+         ln -s "$PREFIX/lib/libz.so" "$PREFIX/lib/libz.so.1"
+    fi
+
+    echo "[4/5] Настройка путей..."
     chmod -R 755 "$jdk_dir/bin"
-    
-    # Создание симлинка java в $PREFIX/bin, если его нет или это симлинк
     local bin_java="$PREFIX/bin/java"
-    
-    # Если java уже есть и это настоящий файл (не симлинк) - бэкапим
     if [ -f "$bin_java" ] && [ ! -L "$bin_java" ]; then
         mv "$bin_java" "${bin_java}.bak"
     fi
-    
-    # Создаем враппер скрипт или симлинк
-    # Лучше симлинк для совместимости
     rm -f "$bin_java"
     ln -s "$jdk_dir/bin/java" "$bin_java"
 
-    # Дополнительно прописываем JAVA_HOME в profile, если нет
+    # Переменные окружения
+    export JAVA_HOME="$jdk_dir"
+    export PATH="$JAVA_HOME/bin:$PATH"
     if ! grep -q "JAVA_HOME.*jdk8" "$HOME/.bashrc"; then
         echo "export JAVA_HOME=$jdk_dir" >> "$HOME/.bashrc"
         echo "export PATH=\$JAVA_HOME/bin:\$PATH" >> "$HOME/.bashrc"
     fi
-    export JAVA_HOME="$jdk_dir"
-    export PATH="$JAVA_HOME/bin:$PATH"
 
-    echo "[4/4] Проверка..."
-    if find_java; then
+    echo "[5/5] Проверка..."
+    # Сброс кэша команд
+    hash -r 2>/dev/null
+    
+    if "$bin_java" -version &>/dev/null; then
         local ver
-        ver=$("$JAVA_BIN" -version 2>&1 | head -1)
+        ver=$("$bin_java" -version 2>&1 | head -1)
         echo ""
         echo "УСПЕХ: Установлена $ver"
-        echo "Путь: $JAVA_BIN"
+        echo "Путь: $bin_java"
         return 0
     else
-        echo "ОШИБКА: Java установлена, но не запускается."
+        echo "ОШИБКА: Java не запускается даже с патчем."
+        echo "Попробуйте вручную:"
+        echo "export LD_LIBRARY_PATH=$PREFIX/lib"
+        echo "$bin_java -version"
+        echo "Вывод ошибки:"
+        "$bin_java" -version
         return 1
     fi
 }
