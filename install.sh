@@ -1100,7 +1100,6 @@ main_loop() {
         done
 
         local status_line="Серверов: $count | Запущено: $running"
-        find_java &>/dev/null && status_line="Java: OK | $status_line"
 
         local choice
         choice=$(dialog --title "$TITLE" \
@@ -1136,8 +1135,4 @@ main_loop() {
 # =====================
 # Main
 # =====================
-# Предварительный поиск Java (кэширование) для ускорения меню
-echo "Загрузка..."
-find_java &>/dev/null
-
 main_loop
