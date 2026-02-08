@@ -1134,15 +1134,61 @@ dashboard() {
 
 step_ssh() {
     local choice
-    choice=$(dialog --title "SSH Управление" --menu "Выбери действие:" 12 50 4 \
+    choice=$(dialog --title "SSH Управление" --menu "Выбери действие:" 14 55 6 \
         "enable"  "Включить SSH + Автозапуск" \
         "keys"    "Добавить SSH ключ (без пароля)" \
         "status"  "Статус подключения" \
         "passwd"  "Сменить пароль" \
+        "repair"  "Починить SSH (сброс ошибок)" \
+        "debug"   "РЕЖИМ ОТЛАДКИ (лог на экран)" \
         3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
 
     case "$choice" in
+        debug)
+            clear
+            echo "=== SSH DEBUG MODE ==="
+            echo "Сейчас SSH запустится в режиме отладки."
+            echo "Попробуй подключиться с ПК и смотри СЮДА на экран."
+            echo "Ты увидишь причину ошибки!"
+            echo "Для выхода нажми Ctrl+C"
+            echo ""
+            # Убиваем текущие
+            pkill sshd
+            # Запускаем в foreground с дебагом и выводом в stderr
+            /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022
+            
+            echo ""
+            echo "Отладка завершена. Перезапускаю обычный SSH..."
+            sshd
+            read -t 3
+            ;;
+            
+        repair)
+            clear
+            echo "=== Ремонт SSH ==="
+            echo "1. Остановка процессов..."
+            pkill sshd
+            sv-disable sshd 2>/dev/null
+            
+            echo "2. Исправление прав доступа..."
+            chmod 700 "$HOME"
+            chmod 700 "$HOME/.ssh"
+            chmod 600 "$HOME/.ssh/authorized_keys" 2>/dev/null
+            
+            echo "3. Генерация ключей хоста..."
+            ssh-keygen -A
+            
+            echo "4. Переустановка сервиса..."
+            source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null
+            sv-enable sshd
+            
+            echo "5. Запуск..."
+            sshd
+            
+            dialog --title "Готово" --msgbox "SSH перезапущен и права исправлены.\nПопробуй подключиться снова." 8 50
+            ;;
+
         enable)
             clear
             echo "=== Настройка SSH ==="
