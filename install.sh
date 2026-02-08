@@ -615,8 +615,9 @@ create_server() {
     [ $? -ne 0 ] && return
 
     local core_choice
-    core_choice=$(dialog --title "Новый сервер: $name" --menu "Ядро сервера:" 10 54 2 \
+    core_choice=$(dialog --title "Новый сервер: $name" --menu "Ядро сервера:" 12 54 4 \
         "poseidon" "Project Poseidon (Beta 1.7.3)" \
+        "reindev"  "Reindev 2.9_03 (Modded)" \
         "custom"   "Закину server.jar вручную" \
         3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
@@ -626,10 +627,19 @@ create_server() {
     if [ "$core_choice" == "poseidon" ]; then
         clear
         echo "=== Скачиваю Project Poseidon ==="
-        echo ""
         if ! wget -O "$sv_dir/server.jar" "$POSEIDON_URL"; then
             rm -f "$sv_dir/server.jar"
             dialog --title "Ошибка" --msgbox "Не удалось скачать! Проверь интернет." 6 50
+            return
+        fi
+    elif [ "$core_choice" == "reindev" ]; then
+        clear
+        echo "=== Скачиваю Reindev 2.9_03 ==="
+        # Ссылка на релиз (тег kernels)
+        REINDEV_URL="https://github.com/FLEXIY0/MBSFT/releases/download/kernels/reindev-server-2.9_03.jar"
+        if ! wget -O "$sv_dir/server.jar" "$REINDEV_URL"; then
+            rm -f "$sv_dir/server.jar"
+            dialog --title "Ошибка" --msgbox "Не удалось скачать Reindev!\n\nУбедись, что релиз 'kernels' создан и файл загружен." 8 50
             return
         fi
     else
