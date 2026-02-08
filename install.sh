@@ -27,6 +27,11 @@ JAVA_BIN=""
 # Поиск Java
 # =====================
 find_java() {
+    # Кэширование: если уже нашли, не проверяем снова (ускоряет меню)
+    if [ -n "$JAVA_BIN" ] && [ "$_JAVA_CHECKED" == "true" ]; then
+        return 0
+    fi
+
     # 1. Проверяем Java 8 внутри proot-distro (Ubuntu)
     if command -v proot-distro &>/dev/null; then
         # Простая проверка: если java запускается и выдает версию
@@ -34,6 +39,7 @@ find_java() {
              # Дополнительно проверим, что это версия 1.8
              if proot-distro login ubuntu -- java -version 2>&1 | grep -q 'version "1\.8'; then
                  JAVA_BIN="proot-distro (ubuntu/java8)"
+                 _JAVA_CHECKED="true"
                  return 0
              fi
         fi
@@ -54,10 +60,13 @@ find_java() {
     for p in "${paths[@]}"; do
         if [ -x "$p" ] && check_version "$p"; then
             JAVA_BIN="$p"
+            _JAVA_CHECKED="true"
             return 0
         fi
     done
 
+    _JAVA_CHECKED="true" # Проверили, но не нашли
+    JAVA_BIN=""
     return 1
 }
 
@@ -435,10 +444,15 @@ check_deps_status() {
     # Java
     if find_java; then
         local jver
-        jver=$(proot-distro login ubuntu -- java -version 2>&1 | head -1)
-        result+="Java (Proot):       OK  ($jver)\n"
+        if [[ "$JAVA_BIN" == *"proot"* ]]; then
+            # Очистка вывода от ANSI кодов и Warning'ов про CPU
+            jver=$(proot-distro login ubuntu -- java -version 2>&1 | grep "version" | head -1 | sed 's/\x1b\[[0-9;]*m//g' | sed 's/Warning.*//g')
+        else
+            jver=$("$JAVA_BIN" -version 2>&1 | head -1)
+        fi
+        result+="Java:              OK  ($jver)\n"
     else
-        result+="Java (Proot):       НЕТ\n"
+        result+="Java:              НЕТ\n"
         all_ok=false
     fi
 
