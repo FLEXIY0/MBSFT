@@ -1090,6 +1090,41 @@ step_ssh() {
 }
 
 # =====================
+# Удаление всего
+# =====================
+uninstall_all() {
+    dialog --title "ОПАСНО!" --yesno "Ты точно хочешь удалить ВСЕ серверы и данные MBSFT?\n\nЭто действие нельзя отменить!" 8 50
+    [ $? -ne 0 ] && return
+
+    dialog --title "ПОДТВЕРЖДЕНИЕ" --yesno "Последний шанс!\n\nУдалить папку $BASE_DIR?" 7 40
+    [ $? -ne 0 ] && return
+
+    clear
+    echo "=== Остановка серверов ==="
+    
+    # Получаем список
+    local servers
+    read -ra servers <<< "$(get_servers)"
+    
+    for srv in "${servers[@]}"; do
+        [ -z "$srv" ] && continue
+        echo "Останавливаю $srv..."
+        server_stop_silent "$srv"
+        # Удаляем сервис runit (если есть)
+        local sv_service_dir="$PREFIX/var/service/mbsft-$srv"
+        if [ -d "$sv_service_dir" ]; then
+             rm "$sv_service_dir"
+            # Перезагружаем сервис-менеджер, если нужно, но rm достаточно
+        fi
+    done
+    
+    echo "=== Удаление файлов ==="
+    rm -rf "$BASE_DIR"
+    
+    dialog --title "Готово" --msgbox "Все данные MBSFT удалены.\n\nЗависимости (Java, dialog) остались." 8 45
+}
+
+# =====================
 # Главное меню
 # =====================
 
@@ -1119,6 +1154,7 @@ main_loop() {
             "ssh"      "Настроить SSH" \
             "---"      "─────────────────────" \
             "quit"     "Выход" \
+            "uninstall" "Удалить всё (СБРОС)" \
             3>&1 1>&2 2>&3)
 
         case $? in
@@ -1133,6 +1169,7 @@ main_loop() {
             dash)    dashboard ;;
             ssh)     step_ssh ;;
             quit)    break ;;
+            uninstall) uninstall_all ;;
         esac
     done
 
