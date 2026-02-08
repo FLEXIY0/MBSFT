@@ -293,22 +293,27 @@ patch_server() {
 # Генерация start.sh (использует proot-distro)
 # Генерация start.sh (использует proot-distro или нативную java)
 make_start_sh() {
-    local sv_dir="$1" name="$2" ram="$3" port="$4"
+    local sv_dir="$1" name="$2" ram="$3" port="$4" core="$5"
     
+    # Флаги запуска в зависимости от ядра
+    local args="nogui"
+    if [ "$core" == "foxloader" ]; then
+        args="--server"
+    fi
+
     # Убедимся, что JAVA_BIN актуальна
     find_java
 
     if [[ "$JAVA_BIN" == *"proot-distro"* ]]; then
         # Режим Proot:
-        # --bind "$sv_dir:/server" монтирует папку сервера в /server внутри Linux
         cat > "$sv_dir/start.sh" << EOF
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$sv_dir"
 echo "[$name] Запуск через Proot Ubuntu (Java 8)..."
-echo "RAM: $ram, Port: $port"
+echo "RAM: $ram, Port: $port, Core: $core"
 
 # Запуск Java внутри Ubuntu
-proot-distro login ubuntu --bind "$sv_dir:/server" -- java -Xmx$ram -Xms$ram -jar /server/server.jar nogui
+proot-distro login ubuntu --bind "$sv_dir:/server" -- java -Xmx$ram -Xms$ram -jar /server/server.jar $args
 EOF
     else
         # Режим Native:
@@ -316,8 +321,8 @@ EOF
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$sv_dir"
 echo "[$name] Запуск (Native Java 8)..."
-echo "RAM: $ram, Port: $port"
-"$JAVA_BIN" -Xmx$ram -Xms$ram -jar server.jar nogui
+echo "RAM: $ram, Port: $port, Core: $core"
+"$JAVA_BIN" -Xmx$ram -Xms$ram -jar server.jar $args
 EOF
     fi
     chmod +x "$sv_dir/start.sh"
@@ -615,10 +620,11 @@ create_server() {
     [ $? -ne 0 ] && return
 
     local core_choice
-    core_choice=$(dialog --title "Новый сервер: $name" --menu "Ядро сервера:" 12 54 4 \
-        "poseidon" "Project Poseidon (Beta 1.7.3)" \
-        "reindev"  "Reindev 2.9_03 (Modded)" \
-        "custom"   "Закину server.jar вручную" \
+    core_choice=$(dialog --title "Новый сервер: $name" --menu "Ядро сервера:" 13 54 5 \
+        "poseidon"  "Project Poseidon (Beta 1.7.3)" \
+        "reindev"   "Reindev 2.9_03 (Modded)" \
+        "foxloader" "FoxLoader 1.2-alpha39 (Modding)" \
+        "custom"    "Закину server.jar вручную" \
         3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
 
@@ -635,18 +641,28 @@ create_server() {
     elif [ "$core_choice" == "reindev" ]; then
         clear
         echo "=== Скачиваю Reindev 2.9_03 ==="
-        # Ссылка на релиз (тег kernels)
-        REINDEV_URL="https://github.com/FLEXIY0/MBSFT/releases/download/kernels/reindev-server-2.9_03.jar"
+        # Ссылка на релиз (тег servers)
+        REINDEV_URL="https://github.com/FLEXIY0/MBSFT/releases/download/servers/reindev-server-2.9_03.jar"
         if ! wget -O "$sv_dir/server.jar" "$REINDEV_URL"; then
             rm -f "$sv_dir/server.jar"
-            dialog --title "Ошибка" --msgbox "Не удалось скачать Reindev!\n\nУбедись, что релиз 'kernels' создан и файл загружен." 8 50
+            dialog --title "Ошибка" --msgbox "Не удалось скачать Reindev!\n\nУбедись, что файл есть в релизе 'servers'." 8 50
+            return
+        fi
+    elif [ "$core_choice" == "foxloader" ]; then
+        clear
+        echo "=== Скачиваю FoxLoader ==="
+        FOX_URL="https://github.com/Fox2Code/FoxLoader/releases/download/2.0-alpha39/foxloader-2.0-alpha39-server.jar"
+        if ! wget -O "$sv_dir/server.jar" "$FOX_URL"; then
+            rm -f "$sv_dir/server.jar"
+            dialog --title "Ошибка" --msgbox "Не удалось скачать FoxLoader!" 6 50
             return
         fi
     else
         dialog --title "$name" --msgbox "Закинь server.jar в папку:\n\n$sv_dir/\n\nЗатем зайди в управление сервером." 10 54
     fi
 
-    make_start_sh "$sv_dir" "$name" "$ram" "$port"
+    # Передаем тип ядра для правильной генерации start.sh (аргументы запуска)
+    make_start_sh "$sv_dir" "$name" "$ram" "$port" "$core_choice"
     write_server_conf "$sv_dir" "$name" "$ram" "$port" "$core_choice"
 
     if [ -f "$sv_dir/server.jar" ]; then
