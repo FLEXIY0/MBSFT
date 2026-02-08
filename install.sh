@@ -20,7 +20,8 @@ fi
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
 POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
-JAVA8_INSTALL_URL="https://raw.githubusercontent.com/MasterDevX/Termux-Java/master/installjava"
+JDK8_AARCH64_URL="https://github.com/Hax4us/java/releases/download/v8/jdk8_aarch64.tar.gz"
+JDK8_ARM_URL="https://github.com/Hax4us/java/releases/download/v8-151/jdk8_arm.tar.gz"
 VERSION="2.3"
 
 # Java: будет найдена динамически
@@ -32,11 +33,11 @@ JAVA_BIN=""
 find_java() {
     # Приоритет: java-8 > любая java в PATH (но строго 1.8)
     local paths=(
+        "$PREFIX/share/jdk8/bin/java"
         "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
         "/data/data/com.termux/files/usr/lib/jvm/java-8/bin/java"
         "$HOME/.jdk8/bin/java"
         "$HOME/jdk8u372-b07/bin/java"
-        "$PREFIX/opt/openjdk/bin/java"
     )
     
     # Функция проверки версии
@@ -291,59 +292,110 @@ EOF
 
 install_java() {
     echo ""
-    echo "=== Установка Java 8 ==="
+    echo "=== Установка Java 8 (Hax4us) ==="
     echo ""
 
-    # Способ 1: Termux-Java от MasterDevX (рекомендуется для Java 8)
-    echo "[1/3] Пробую Termux-Java (MasterDevX)..."
+    # Определение архитектуры
+    local arch
+    arch=$(uname -m)
+    local download_url=""
+    
+    case "$arch" in
+        aarch64)
+            echo "Архитектура: aarch64"
+            download_url="$JDK8_AARCH64_URL"
+            ;;
+        arm*|abc) # armv7l, armv8l и т.д.
+            echo "Архитектура: arm ($arch)"
+            download_url="$JDK8_ARM_URL"
+            ;;
+        *)
+            echo "ОШИБКА: Архитектура '$arch' не поддерживается для авто-установки Java 8."
+            return 1
+            ;;
+    esac
+
+    # Проверка wget
     if ! command -v wget &>/dev/null; then
         echo "Устанавливаю wget..."
         pkg install -y wget
     fi
+
+    local tmp_jdk="jdk8.tar.gz"
+    local install_dir="$PREFIX/share"
+    local jdk_dir="$install_dir/jdk8"
+
+    echo "[1/4] Скачивание JDK 8..."
+    if ! wget -O "$tmp_jdk" "$download_url"; then
+        echo "ОШИБКА: Не удалось скачать Java!"
+        rm -f "$tmp_jdk"
+        return 1
+    fi
+
+    echo "[2/4] Распаковка..."
+    mkdir -p "$install_dir"
+    # Удаляем старую версию если есть
+    rm -rf "$jdk_dir"
     
-    local tmpscript="$HOME/.java8_install_tmp.sh"
-    if wget -O "$tmpscript" "$JAVA8_INSTALL_URL" 2>/dev/null; then
-        bash "$tmpscript"
-        rm -f "$tmpscript"
-        if find_java; then
-            echo ""
-            echo "OK: Java 8 установлена — $JAVA_BIN"
-            return 0
+    if ! tar -xf "$tmp_jdk" -C "$install_dir"; then
+        echo "ОШИБКА: Кривой архив (не распаковался)."
+        rm -f "$tmp_jdk"
+        return 1
+    fi
+    rm -f "$tmp_jdk"
+
+    # Hax4us архив обычно распаковывается как 'jdk8', но проверим
+    # Если папка называется иначе, нужно найти её
+    # В архивах Hax4us папка обычно `jdk8`
+    
+    if [ ! -d "$jdk_dir" ]; then
+        # Попытка найти, если имя отличается
+        local found_dir
+        found_dir=$(find "$install_dir" -maxdepth 1 -type d -name "jdk8*" | head -1)
+        if [ -n "$found_dir" ]; then
+            jdk_dir="$found_dir"
+        else
+            echo "ОШИБКА: Не найдена папка jdk8 после распаковки."
+            return 1
         fi
     fi
 
-    # Способ 2: openjdk-8 из tur-repo
-    echo ""
-    echo "[2/3] Пробую openjdk-8 (tur-repo)..."
-    pkg install -y tur-repo 2>/dev/null
-    pkg install -y openjdk-8
-    if find_java; then
-        echo ""
-        echo "OK: Java 8 найдена — $JAVA_BIN"
-        return 0
+    echo "[3/4] Настройка прав и путей..."
+    chmod -R 755 "$jdk_dir/bin"
+    
+    # Создание симлинка java в $PREFIX/bin, если его нет или это симлинк
+    local bin_java="$PREFIX/bin/java"
+    
+    # Если java уже есть и это настоящий файл (не симлинк) - бэкапим
+    if [ -f "$bin_java" ] && [ ! -L "$bin_java" ]; then
+        mv "$bin_java" "${bin_java}.bak"
     fi
+    
+    # Создаем враппер скрипт или симлинк
+    # Лучше симлинк для совместимости
+    rm -f "$bin_java"
+    ln -s "$jdk_dir/bin/java" "$bin_java"
 
-    # Способ 3: альтернативный скрипт openjdk-8
-    echo ""
-    echo "[3/3] Пробую альтернативный установщик openjdk-8..."
-    local ALT_URL="https://raw.githubusercontent.com/nicola02nb/termux-openjdk-8/main/install.sh"
-    if command -v curl &>/dev/null; then
-        curl -sL "$ALT_URL" | bash
-    elif command -v wget &>/dev/null; then
-        wget -qO- "$ALT_URL" | bash
+    # Дополнительно прописываем JAVA_HOME в profile, если нет
+    if ! grep -q "JAVA_HOME.*jdk8" "$HOME/.bashrc"; then
+        echo "export JAVA_HOME=$jdk_dir" >> "$HOME/.bashrc"
+        echo "export PATH=\$JAVA_HOME/bin:\$PATH" >> "$HOME/.bashrc"
     fi
-    if find_java; then
-        echo ""
-        echo "OK: Java 8 найдена — $JAVA_BIN"
-        return 0
-    fi
+    export JAVA_HOME="$jdk_dir"
+    export PATH="$JAVA_HOME/bin:$PATH"
 
-    echo ""
-    echo "ОШИБКА: Не удалось установить Java 8!"
-    echo "Попробуй вручную:"
-    echo "  pkg install wget && wget https://raw.githubusercontent.com/MasterDevX/Termux-Java/master/installjava && bash installjava"
-    echo "  или: pkg install openjdk-8"
-    return 1
+    echo "[4/4] Проверка..."
+    if find_java; then
+        local ver
+        ver=$("$JAVA_BIN" -version 2>&1 | head -1)
+        echo ""
+        echo "УСПЕХ: Установлена $ver"
+        echo "Путь: $JAVA_BIN"
+        return 0
+    else
+        echo "ОШИБКА: Java установлена, но не запускается."
+        return 1
+    fi
 }
 
 check_deps_status() {
