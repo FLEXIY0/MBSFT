@@ -209,7 +209,7 @@ get_ip() {
 }
 
 deps_installed() {
-    find_java && command -v screen &>/dev/null && command -v wget &>/dev/null
+    find_java && command -v tmux &>/dev/null && command -v wget &>/dev/null
 }
 
 validate_name() {
@@ -892,13 +892,20 @@ server_stop() {
         return
     fi
 
-    screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
+    # Отправляем stop
+    tmux send-keys -t "mbsft-$name" "stop" C-m 2>/dev/null
+    
     local tries=0
+    # Ждем завершения
     while is_server_running "$name" && [ $tries -lt 15 ]; do
         sleep 1
         tries=$((tries + 1))
     done
-    is_server_running "$name" && screen -S "mbsft-${name}" -X quit 2>/dev/null
+    
+    # Если завис
+    if is_server_running "$name"; then
+         tmux kill-session -t "mbsft-$name" 2>/dev/null
+    fi
 
     dialog --title "$name" --msgbox "Сервер остановлен." 6 34
 }
@@ -992,12 +999,17 @@ cd "$sv_dir"
 (
     while true; do
         sleep 600
-        screen -S "mbsft-${name}" -p 0 -X stuff "save-all\$(printf \\\\r)" 2>/dev/null
+        tmux send-keys -t "mbsft-${name}" "save-all" C-m 2>/dev/null
     done
 ) &
 SAVE_PID=\$!
 trap "kill \$SAVE_PID 2>/dev/null" EXIT TERM INT
-exec screen -DmS "mbsft-${name}" ./start.sh
+# tmux не умеет работать в foreground без TTY так, как screen -Dm.
+# Эмулируем это: запускаем в фоне (-d) и ждем, пока сессия не исчезнет.
+tmux new-session -d -s "mbsft-${name}" ./start.sh
+while tmux has-session -t "mbsft-${name}" 2>/dev/null; do
+    sleep 5
+done
 SEOF
     chmod +x "$SVDIR/run"
 
@@ -1039,36 +1051,31 @@ server_delete() {
         rm -rf "$PREFIX/var/service/$sv_service"
     fi
 
-    # 2. Остановка Screen сессии
-    if screen -list | grep -q "\.${sv_screen}[[:space:]]"; then
+    # 2. Остановка Tmux сессии
+    if tmux has-session -t "mbsft-${name}" 2>/dev/null; then
         # Попытка мягкой остановки
-        screen -S "$sv_screen" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
+        tmux send-keys -t "mbsft-${name}" "stop" C-m 2>/dev/null
         sleep 3
         # Принудительное убийство сессии
-        screen -S "$sv_screen" -X quit 2>/dev/null
+        tmux kill-session -t "mbsft-${name}" 2>/dev/null
     fi
     
-    # 3. Дополнительная проверка на зависшие процессы screen
-    # (иногда screen -ls показывает мертвые сессии, чистим их)
-    screen -wipe &>/dev/null
-
-    # 4. Проверка процессов Java, запущенных из папки сервера
-    # Это сложно сделать точно без pgrep -f с полным путем, но попробуем
-    # Если pgrep есть
+    # 4. Проверка процессов Java
     if command -v pgrep &>/dev/null; then
-        # Ищем процессы java, у которых cwd или аргументы содержат путь к серверу?
-        # В Android/Termux сложно получить cwd чужого процесса без рута иногда.
-        # Но мы можем поискать screen процесс с именем
-        pgrep -f "mbsft-${name}" | xargs kill -9 2>/dev/null
+        # Пытаемся убить процессы, связанные с именем сервера (не идеально, но для tmux может не сработать pgrep -f mbsft-name так как это имя сессии)
+        # Но если java запущена через скрипт, она может висеть.
+        # Пока оставим pgrep -f но это может не найти сессию tmux по имени в аргументах процесса java.
+        # Лучше полагаться на tmux kill-session.
+        true
     fi
 
-    # Финальная проверка: существует ли папка сервиса или screen
+    # Финальная проверка
     if [ -d "$PREFIX/var/service/$sv_service" ]; then
         dialog --title "ОШИБКА" --msgbox "Не удалось удалить сервис '$sv_service'!" 6 40
         return 1
     fi
-    if screen -list | grep -q "\.${sv_screen}[[:space:]]"; then
-        dialog --title "ОШИБКА" --msgbox "Не удалось остановить screen сессию '$sv_screen'!" 6 40
+    if tmux has-session -t "mbsft-${name}" 2>/dev/null; then
+        dialog --title "ОШИБКА" --msgbox "Не удалось остановить сессию '$sv_screen'!" 6 40
         return 1
     fi
 
