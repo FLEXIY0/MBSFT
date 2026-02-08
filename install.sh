@@ -865,9 +865,20 @@ server_start() {
         return
     fi
 
-    # Если сервер НЕ работает, но сессия screen с таким именем висит (Dead/Remote) — убиваем её
-    if screen -ls | grep -q "mbsft-$name"; then
-        screen -d -r "mbsft-$name" -X quit 2>/dev/null
+    # Жесткая очистка "зомби" сессий (Remote or dead)
+    # Находим все сессии с именем mbsft-$name, берем их PID и убиваем
+    local zombie_pids
+    zombie_pids=$(screen -ls | grep "mbsft-$name" | awk '{print $1}' | cut -d. -f1)
+    
+    if [ -n "$zombie_pids" ]; then
+        echo "Обнаружены старые сессии, очистка..."
+        for pid in $zombie_pids; do
+            # Проверяем, число ли это (защита от ошибок парсинга)
+            if [[ "$pid" =~ ^[0-9]+$ ]]; then
+                kill -9 "$pid" 2>/dev/null
+            fi
+        done
+        # После убийства процессов, wipe удалит сокеты
         screen -wipe >/dev/null 2>&1
     fi
 
