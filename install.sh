@@ -1134,29 +1134,99 @@ dashboard() {
 }
 
 # =====================
-# 6. SSH
+# 6. SSH и Ключи
 # =====================
 
 step_ssh() {
-    dialog --title "SSH" --yesno "Настроить SSH доступ?\n\nПосле этого сможешь управлять\nсервером с ПК через терминал." 9 44
+    local choice
+    choice=$(dialog --title "SSH Управление" --menu "Выбери действие:" 12 50 4 \
+        "enable"  "Включить SSH + Автозапуск" \
+        "keys"    "Добавить SSH ключ (без пароля)" \
+        "status"  "Статус подключения" \
+        "passwd"  "Сменить пароль" \
+        3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
 
-    clear
-    echo "=== Настройка SSH ==="
-    echo ""
-    echo "Придумай пароль:"
-    passwd
-    sshd
-    echo ""
-
-    local user local_ip ext_ip
-    user=$(whoami)
-    local_ip=$(get_local_ip)
-    ext_ip=$(get_external_ip)
-    echo "Готово! Нажми Enter..."
-    read -r
-
-    dialog --title "SSH" --msgbox "SSH запущен!\n\nЛокальный IP: $local_ip\nВнешний IP:   $ext_ip\n\nПодключение по Wi-Fi (из дома):\n  ssh -p 8022 $user@$local_ip\n\nПодключение извне:\n  ssh -p 8022 $user@$ext_ip" 15 52
+    case "$choice" in
+        enable)
+            clear
+            echo "=== Настройка SSH ==="
+            # Установка ssh и сервисов
+            pkg install -y openssh termux-services
+            
+            # Включаем сервис sshd
+            echo "Активация сервиса sshd..."
+            sv-enable sshd
+            
+            # Запускаем, если не запущен
+            if ! pgrep sshd >/dev/null; then
+                sshd
+            fi
+            
+            # Предлагаем сменить пароль, если это первый раз
+            dialog --title "Пароль" --yesno "Хочешь задать/сменить пароль для SSH?" 7 40
+            if [ $? -eq 0 ]; then
+                clear
+                echo "Введи новый пароль:"
+                passwd
+            fi
+            
+            dialog --title "Готово" --msgbox "SSH включен и добавлен в автозагрузку!" 6 45
+            ;;
+            
+        keys)
+            local key_choice
+            key_choice=$(dialog --title "SSH Ключи" --menu "Как добавить ключ?" 10 50 3 \
+                "github" "Скачать с GitHub (по нику)" \
+                "manual" "Ввести вручную (вставить)" \
+                "reset"  "Удалить все ключи" \
+                3>&1 1>&2 2>&3)
+            [ $? -ne 0 ] && return
+            
+            mkdir -p "$HOME/.ssh"
+            touch "$HOME/.ssh/authorized_keys"
+            chmod 700 "$HOME/.ssh"
+            chmod 600 "$HOME/.ssh/authorized_keys"
+            
+            if [ "$key_choice" == "github" ]; then
+                local gh_user
+                gh_user=$(dialog --title "GitHub" --inputbox "Введи свой GitHub username:" 8 40 3>&1 1>&2 2>&3)
+                [ $? -ne 0 ] || [ -z "$gh_user" ] && return
+                
+                if curl -s "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys"; then
+                     dialog --title "Успех" --msgbox "Ключи пользователя $gh_user добавлены!" 6 40
+                else
+                     dialog --title "Ошибка" --msgbox "Не удалось скачать ключи." 6 30
+                fi
+                
+            elif [ "$key_choice" == "manual" ]; then
+                local key_text
+                key_text=$(dialog --title "Ввод ключа" --inputbox "Вставь pub-ключ (начинается с ssh-rsa ...):" 10 60 3>&1 1>&2 2>&3)
+                [ $? -ne 0 ] || [ -z "$key_text" ] && return
+                echo "$key_text" >> "$HOME/.ssh/authorized_keys"
+                dialog --title "Успех" --msgbox "Ключ добавлен!" 6 30
+                
+            elif [ "$key_choice" == "reset" ]; then
+                echo "" > "$HOME/.ssh/authorized_keys"
+                dialog --title "Сброс" --msgbox "Все ключи удалены." 6 30
+            fi
+            ;;
+            
+        status)
+            local user local_ip ext_ip
+            user=$(whoami)
+            local_ip=$(get_local_ip)
+            ext_ip=$(get_external_ip)
+            dialog --title "SSH Инфо" --msgbox "Пользователь: $user\nПорт: 8022\n\nЛокальный IP: $local_ip\nВнешний IP:   $ext_ip\n\nПодключение:\nssh -p 8022 $user@$local_ip" 14 50
+            ;;
+            
+        passwd)
+            clear
+            passwd
+            echo "Пароль изменен. Нажми Enter..."
+            read -r
+            ;;
+    esac
 }
 
 # =====================
