@@ -1188,18 +1188,38 @@ step_ssh() {
                 gh_user=$(dialog --title "GitHub" --inputbox "Введи свой GitHub username:" 8 40 3>&1 1>&2 2>&3)
                 [ $? -ne 0 ] || [ -z "$gh_user" ] && return
                 
-                if curl -s "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys"; then
-                     dialog --title "Успех" --msgbox "Ключи пользователя $gh_user добавлены!" 6 40
+                local tmp_key
+                tmp_key=$(mktemp)
+                
+                # Скачиваем с флагом -f (fail on error)
+                if curl -fsL "https://github.com/${gh_user}.keys" > "$tmp_key"; then
+                    # Проверяем, похоже ли это на ключ
+                    if grep -q "ssh-" "$tmp_key"; then
+                        echo "" >> "$HOME/.ssh/authorized_keys" # Разделитель
+                        cat "$tmp_key" >> "$HOME/.ssh/authorized_keys"
+                        chmod 600 "$HOME/.ssh/authorized_keys"
+                        dialog --title "Успех" --msgbox "Ключи пользователя $gh_user добавлены!" 6 40
+                    else
+                        dialog --title "Ошибка" --msgbox "У пользователя $gh_user нет публичных ключей (или файл пуст)." 8 45
+                    fi
                 else
-                     dialog --title "Ошибка" --msgbox "Не удалось скачать ключи." 6 30
+                     dialog --title "Ошибка" --msgbox "Не удалось скачать ключи (проверь ник и интернет)." 6 45
                 fi
+                rm -f "$tmp_key"
                 
             elif [ "$key_choice" == "manual" ]; then
                 local key_text
                 key_text=$(dialog --title "Ввод ключа" --inputbox "Вставь pub-ключ (начинается с ssh-rsa ...):" 10 60 3>&1 1>&2 2>&3)
                 [ $? -ne 0 ] || [ -z "$key_text" ] && return
-                echo "$key_text" >> "$HOME/.ssh/authorized_keys"
-                dialog --title "Успех" --msgbox "Ключ добавлен!" 6 30
+                
+                if [[ "$key_text" == ssh-* ]]; then
+                    echo "" >> "$HOME/.ssh/authorized_keys"
+                    echo "$key_text" >> "$HOME/.ssh/authorized_keys"
+                    chmod 600 "$HOME/.ssh/authorized_keys"
+                    dialog --title "Успех" --msgbox "Ключ добавлен!" 6 30
+                else
+                    dialog --title "Ошибка" --msgbox "Это не похоже на SSH ключ (должен начинаться с ssh-...)" 8 45
+                fi
                 
             elif [ "$key_choice" == "reset" ]; then
                 echo "" > "$HOME/.ssh/authorized_keys"
