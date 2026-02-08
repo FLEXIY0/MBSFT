@@ -19,9 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-JDK8_AARCH64_URL="https://github.com/Hax4us/java/releases/download/v8/jdk8_aarch64.tar.gz"
-JDK8_ARM_URL="https://github.com/Hax4us/java/releases/download/v8-151/jdk8_arm.tar.gz"
-
+VERSION="2.3"
 # Java: будет найдена динамически
 JAVA_BIN=""
 
@@ -293,6 +291,16 @@ install_java() {
     if ! command -v proot-distro &>/dev/null; then
         echo "[1/4] Установка proot-distro..."
         pkg install -y proot-distro
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "ОШИБКА: Не удалось установить proot-distro!"
+            echo "Возможно, сломаны зеркала Termux."
+            echo "Попробуй выполнить команду:"
+            echo "  termux-change-repo"
+            echo "Выбери 'Main repository' -> 'Mirrors by Grimler' (или любое другое)."
+            echo "Затем запусти установку снова."
+            return 1
+        fi
     fi
 
     # 2. Установка Ubuntu
