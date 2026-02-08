@@ -996,14 +996,10 @@ server_create_service() {
     cat > "$SVDIR/run" << SEOF
 #!/data/data/com.termux/files/usr/bin/sh
 cd "$sv_dir"
-(
-    while true; do
-        sleep 600
-        tmux send-keys -t "mbsft-${name}" "save-all" C-m 2>/dev/null
-    done
-) &
-SAVE_PID=\$!
-trap "kill \$SAVE_PID 2>/dev/null" EXIT TERM INT
+    cat > "$SVDIR/run" << SEOF
+#!/data/data/com.termux/files/usr/bin/sh
+cd "$sv_dir"
+
 # tmux не умеет работать в foreground без TTY так, как screen -Dm.
 # Эмулируем это: запускаем в фоне (-d) и ждем, пока сессия не исчезнет.
 tmux new-session -d -s "mbsft-${name}" ./start.sh
@@ -1337,6 +1333,9 @@ uninstall_all() {
 # =====================
 
 main_loop() {
+    # Очистка мусорных процессов sleep от старых сервисов
+    pkill -f "sleep 600" 2>/dev/null
+
     while true; do
         local servers
         read -ra servers <<< "$(get_servers)"
