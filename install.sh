@@ -251,9 +251,8 @@ get_servers() {
 
 is_server_running() {
     local name="$1"
-    # Сервер работает, только если статус (Detached) или (Attached)
-    # Игнорируем (Remote or dead) и (Dead)
-    screen -ls 2>/dev/null | grep "mbsft-$name" | grep -E '\(Detached\)|\(Attached\)' >/dev/null
+    # Проверка наличия сессии tmux
+    tmux has-session -t "mbsft-$name" 2>/dev/null
 }
 
 get_actual_port() {
@@ -473,11 +472,11 @@ check_deps_status() {
         all_ok=false
     fi
 
-    # screen
-    if command -v screen &>/dev/null; then
-        result+="screen:         OK\n"
+    # tmux
+    if command -v tmux &>/dev/null; then
+        result+="tmux:              OK\n"
     else
-        result+="screen:         НЕТ\n"
+        result+="tmux:              НЕТ\n"
         all_ok=false
     fi
 
@@ -529,7 +528,7 @@ run_install_deps() {
 
     echo ""
     echo "--- Основные пакеты ---"
-    pkg install -y wget screen termux-services openssh
+    pkg install -y wget tmux termux-services openssh
 
     echo ""
     echo "--- Сетевые утилиты ---"
@@ -548,7 +547,7 @@ run_install_deps() {
     echo "=== Результат ==="
     command -v ip &>/dev/null       && echo "  ip:        OK" || echo "  ip:        НЕТ"
     command -v ifconfig &>/dev/null && echo "  ifconfig:  OK" || echo "  ifconfig:  НЕТ"
-    command -v screen &>/dev/null   && echo "  screen:    OK" || echo "  screen:    НЕТ"
+    command -v tmux &>/dev/null     && echo "  tmux:      OK" || echo "  tmux:      НЕТ"
     command -v wget &>/dev/null     && echo "  wget:      OK" || echo "  wget:      НЕТ"
     [ $java_ok -eq 0 ]             && echo "  java:      OK ($JAVA_BIN)" || echo "  java:      НЕТ"
     echo ""
@@ -692,9 +691,9 @@ EOF
             echo "=== Запуск $name ==="
             server_start "$name"
             
-            echo "Сервер запущен в screen!"
+            echo "Сервер запущен в tmux!"
             echo "Сейчас откроется консоль."
-            echo "Чтобы выйти из консоли (оставив сервер работать), нажми: Ctrl+A, затем D"
+            echo "Чтобы выйти из консоли (оставив сервер работать), нажми: Ctrl+B, затем D"
             echo "Чтобы остановить сервер: напиши 'stop' в консоли."
             echo ""
             echo "Нажми Enter..."
@@ -719,7 +718,7 @@ quick_create() {
             echo ""
             pkg update -y && pkg upgrade -y
             pkg install -y tur-repo 2>/dev/null
-            pkg install -y wget screen termux-services openssh iproute2 net-tools
+            pkg install -y wget tmux termux-services openssh iproute2 net-tools
             install_java
             if ! find_java; then
                 echo "Java не установлена!"
@@ -833,7 +832,7 @@ server_manage_menu() {
             "start"    "Запустить" \
             "stop"     "Остановить" \
             "restart"  "Перезапустить" \
-            "console"  "Консоль (screen)" \
+            "console"  "Консоль (tmux)" \
             "settings" "Настройки (RAM, порт)" \
             "service"  "Создать сервис (автосохр.)" \
             "---"      "─────────────────────" \
@@ -857,45 +856,29 @@ server_start() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
     
-    # Очищаем мертвые сессии перед стартом
-    screen -wipe >/dev/null 2>&1
-
     if is_server_running "$name"; then
         dialog --title "$name" --msgbox "Уже запущен!" 6 30
         return
-    fi
-
-    # Жесткая очистка "зомби" сессий (Remote or dead)
-    # Находим все сессии с именем mbsft-$name, берем их PID и убиваем
-    local zombie_pids
-    zombie_pids=$(screen -ls | grep "mbsft-$name" | awk '{print $1}' | cut -d. -f1)
-    
-    if [ -n "$zombie_pids" ]; then
-        echo "Обнаружены старые сессии, очистка..."
-        for pid in $zombie_pids; do
-            # Проверяем, число ли это (защита от ошибок парсинга)
-            if [[ "$pid" =~ ^[0-9]+$ ]]; then
-                kill -9 "$pid" 2>/dev/null
-            fi
-        done
-        # После убийства процессов, wipe удалит сокеты
-        screen -wipe >/dev/null 2>&1
     fi
 
     if [ ! -f "$sv_dir/server.jar" ]; then
         dialog --title "$name" --msgbox "server.jar не найден!\nЗакинь в: $sv_dir/" 7 50
         return
     fi
-
-    cd "$sv_dir"
-    screen -dmS "mbsft-${name}" ./start.sh
-    sleep 2
+    
+    cd "$sv_dir" || return
+    
+    # Запуск в новой сессии tmux в фоне (-d)
+    # Имя сессии: mbsft-$name
+    tmux new-session -d -s "mbsft-$name" "cd \"$sv_dir\" && ./start.sh"
+    
+    sleep 2 # Даем время на запуск
 
     if is_server_running "$name"; then
         local ip port
         ip=$(get_local_ip)
         port=$(get_actual_port "$sv_dir")
-        dialog --title "$name" --msgbox "Сервер запущен!\n\nПодключение: $ip:$port\nКонсоль: screen -r mbsft-${name}" 9 50
+        dialog --title "$name" --msgbox "Сервер запущен!\n\nПодключение: $ip:$port\nКонсоль: tmux attach-session -t mbsft-${name}" 9 50
     else
         dialog --title "$name" --msgbox "Не удалось запустить.\nПроверь логи в $sv_dir/" 7 50
     fi
@@ -921,24 +904,35 @@ server_stop() {
 
 server_stop_silent() {
     local name="$1"
-    is_server_running "$name" || return
-    screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
-    local tries=0
-    while is_server_running "$name" && [ $tries -lt 15 ]; do
-        sleep 1
-        tries=$((tries + 1))
-    done
-    is_server_running "$name" && screen -S "mbsft-${name}" -X quit 2>/dev/null
+    if is_server_running "$name"; then
+        # Отправляем команду stop в консоль сервера
+        tmux send-keys -t "mbsft-$name" "stop" C-m 2>/dev/null
+        
+        # Ждем 7 секунд, пока сервер сохранит мир и выйдет
+        local timeout=7
+        while [ $timeout -gt 0 ] && is_server_running "$name"; do
+            sleep 1
+            ((timeout--))
+        done
+        
+        # Если все еще жив - убиваем сессию
+        if is_server_running "$name"; then
+            tmux kill-session -t "mbsft-$name" 2>/dev/null
+        fi
+    fi
 }
 
 server_console() {
     local name="$1"
     if ! is_server_running "$name"; then
-        dialog --title "$name" --msgbox "Сервер не запущен!" 6 34
+        dialog --title "Ошибка" --msgbox "Сервер $name не запущен!" 6 40
         return
     fi
-    dialog --title "$name" --msgbox "Откроется консоль.\n\nВыход: Ctrl+A, затем D" 8 40
-    screen -r "mbsft-${name}"
+    clear
+    echo "Подключение к консоли $name..."
+    echo "Выход (оставить работать): Ctrl+B, затем D"
+    read -t 2
+    tmux attach-session -t "mbsft-$name"
 }
 
 server_settings() {
@@ -1319,7 +1313,4 @@ main_loop() {
 # =====================
 # Main
 # =====================
-# Очистка мертвых сессий screen
-screen -wipe >/dev/null 2>&1
-
 main_loop
