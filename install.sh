@@ -30,7 +30,7 @@ JAVA_BIN=""
 # Поиск Java
 # =====================
 find_java() {
-    # Приоритет: java-8 > любая java в PATH
+    # Приоритет: java-8 > любая java в PATH (но строго 1.8)
     local paths=(
         "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
         "/data/data/com.termux/files/usr/lib/jvm/java-8/bin/java"
@@ -38,16 +38,25 @@ find_java() {
         "$HOME/jdk8u372-b07/bin/java"
         "$PREFIX/opt/openjdk/bin/java"
     )
+    
+    # Функция проверки версии
+    check_version() {
+        "$1" -version 2>&1 | grep -q 'version "1\.8'
+    }
+
     for p in "${paths[@]}"; do
-        if [ -x "$p" ]; then
+        if [ -x "$p" ] && check_version "$p"; then
             JAVA_BIN="$p"
             return 0
         fi
     done
-    # Последний шанс — java в PATH
+    
+    # Последний шанс — java в PATH, но только если это версия 1.8
     if command -v java &>/dev/null; then
-        JAVA_BIN="$(command -v java)"
-        return 0
+        if check_version "java"; then
+            JAVA_BIN="$(command -v java)"
+            return 0
+        fi
     fi
     return 1
 }
@@ -836,6 +845,8 @@ LEOF
 server_delete() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
+    local sv_service="mbsft-${name}"
+    local sv_screen="mbsft-${name}"
 
     dialog --title "УДАЛЕНИЕ" --yesno "Удалить сервер '$name' и ВСЕ его файлы?\n\n$sv_dir" 8 50
     [ $? -ne 0 ] && return 1
@@ -843,25 +854,61 @@ server_delete() {
     local confirm
     confirm=$(dialog --title "ПОДТВЕРЖДЕНИЕ" --inputbox "Введи имя сервера для подтверждения:" 8 50 "" 3>&1 1>&2 2>&3)
     if [ "$confirm" != "$name" ]; then
-        dialog --title "$TITLE" --msgbox "Отменено." 6 24
+        dialog --title "$TITLE" --msgbox "Отменено: имя не совпадает." 6 30
         return 1
     fi
 
-    is_server_running "$name" && {
-        screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
-        sleep 3
-        screen -S "mbsft-${name}" -X quit 2>/dev/null
-    }
-
-    local sv_service="mbsft-${name}"
+    echo "Остановка процессов..."
+    
+    # 1. Остановка сервиса (runit)
     if [ -d "$PREFIX/var/service/$sv_service" ]; then
         sv down "$sv_service" 2>/dev/null || true
+        # Даем время на остановку
+        sleep 2
         command -v sv-disable &>/dev/null && sv-disable "$sv_service" 2>/dev/null || true
         rm -rf "$PREFIX/var/service/$sv_service"
     fi
 
-    rm -rf "$sv_dir"
-    dialog --title "$TITLE" --msgbox "Сервер '$name' удалён." 6 38
+    # 2. Остановка Screen сессии
+    if screen -list | grep -q "\.${sv_screen}[[:space:]]"; then
+        # Попытка мягкой остановки
+        screen -S "$sv_screen" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
+        sleep 3
+        # Принудительное убийство сессии
+        screen -S "$sv_screen" -X quit 2>/dev/null
+    fi
+    
+    # 3. Дополнительная проверка на зависшие процессы screen
+    # (иногда screen -ls показывает мертвые сессии, чистим их)
+    screen -wipe &>/dev/null
+
+    # 4. Проверка процессов Java, запущенных из папки сервера
+    # Это сложно сделать точно без pgrep -f с полным путем, но попробуем
+    # Если pgrep есть
+    if command -v pgrep &>/dev/null; then
+        # Ищем процессы java, у которых cwd или аргументы содержат путь к серверу?
+        # В Android/Termux сложно получить cwd чужого процесса без рута иногда.
+        # Но мы можем поискать screen процесс с именем
+        pgrep -f "mbsft-${name}" | xargs kill -9 2>/dev/null
+    fi
+
+    # Финальная проверка: существует ли папка сервиса или screen
+    if [ -d "$PREFIX/var/service/$sv_service" ]; then
+        dialog --title "ОШИБКА" --msgbox "Не удалось удалить сервис '$sv_service'!" 6 40
+        return 1
+    fi
+    if screen -list | grep -q "\.${sv_screen}[[:space:]]"; then
+        dialog --title "ОШИБКА" --msgbox "Не удалось остановить screen сессию '$sv_screen'!" 6 40
+        return 1
+    fi
+
+    if [ -d "$sv_dir" ]; then
+        rm -rf "$sv_dir"
+        dialog --title "$TITLE" --msgbox "Сервер '$name' и все его данные удалены." 6 40
+    else
+        dialog --title "$TITLE" --msgbox "Папка сервера не найдена, но сервисы очищены." 6 40
+    fi
+    
     return 0
 }
 
