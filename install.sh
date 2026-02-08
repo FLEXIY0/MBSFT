@@ -251,8 +251,9 @@ get_servers() {
 
 is_server_running() {
     local name="$1"
-    # Ищем сессию, исключая Dead (мертвые) и Socket (заголовки)
-    screen -list 2>/dev/null | grep -v "Dead" | grep -q "\.mbsft-${name}[[:space:]]"
+    # Сервер работает, только если статус (Detached) или (Attached)
+    # Игнорируем (Remote or dead) и (Dead)
+    screen -ls 2>/dev/null | grep "mbsft-$name" | grep -E '\(Detached\)|\(Attached\)' >/dev/null
 }
 
 get_actual_port() {
@@ -863,6 +864,13 @@ server_start() {
         dialog --title "$name" --msgbox "Уже запущен!" 6 30
         return
     fi
+
+    # Если сервер НЕ работает, но сессия screen с таким именем висит (Dead/Remote) — убиваем её
+    if screen -ls | grep -q "mbsft-$name"; then
+        screen -d -r "mbsft-$name" -X quit 2>/dev/null
+        screen -wipe >/dev/null 2>&1
+    fi
+
     if [ ! -f "$sv_dir/server.jar" ]; then
         dialog --title "$name" --msgbox "server.jar не найден!\nЗакинь в: $sv_dir/" 7 50
         return
