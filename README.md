@@ -38,10 +38,18 @@
 
 ## Установка
 
-Откройте Termux и выполните:
+Откройте Termux и выполните **одну команду**:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh -o install.sh && bash install.sh
+curl -sL https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh | bash
+```
+
+Или если хотите сначала сохранить скрипт и посмотреть:
+
+```bash
+curl -sL https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh -o install.sh
+cat install.sh        # посмотреть содержимое
+bash install.sh       # запустить
 ```
 
 > `curl` предустановлен в Termux. Если его нет:
@@ -53,7 +61,15 @@ curl -sL https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh -o inst
 
 ```bash
 pkg install wget
-wget -O install.sh https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh && bash install.sh
+wget -qO- https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh | bash
+```
+
+### Повторный запуск
+
+После первой установки скрипт остаётся на устройстве:
+
+```bash
+bash install.sh
 ```
 
 ## Использование
