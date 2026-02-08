@@ -1327,9 +1327,12 @@ uninstall_all() {
     sleep 2
 
     echo "=== Убийство остаточных процессов ==="
-    # Убиваем всё, что содержит mbsft- в имени (tmux сессии, runsv процессы и т.д.)
-    pkill -f "mbsft-" 2>/dev/null
-    tmux kill-server 2>/dev/null # Убиваем tmux на всякий случай, если там только наши сессии
+    # Убиваем ВСЁ, что содержит "mbsft" (сервисы, сессии, логи), кроме нас самих ($$)
+    # Используем -9 (SIGKILL) для гарантии
+    pgrep -f "mbsft" | grep -v "$$" | xargs kill -9 2>/dev/null
+    
+    tmux kill-server 2>/dev/null # Убиваем tmux полностью
+    pkill -f "sleep 600" 2>/dev/null # Добиваем слипы
 
     echo "=== Удаление файлов ==="
     rm -rf "$BASE_DIR"
