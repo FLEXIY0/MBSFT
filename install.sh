@@ -29,31 +29,19 @@ JAVA_BIN=""
 # Поиск Java
 # =====================
 find_java() {
-    # Приоритет: java-8 > любая java в PATH (но строго 1.8)
-    local paths=(
-        "$PREFIX/share/jdk8/bin/java"
-        "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
-        "/data/data/com.termux/files/usr/lib/jvm/java-8/bin/java"
-        "$HOME/.jdk8/bin/java"
-        "$HOME/jdk8u372-b07/bin/java"
-    )
-    
-    # Функция проверки версии
-    check_version() {
-        "$1" -version 2>&1 | grep -q 'version "1\.8'
-    }
-
-    for p in "${paths[@]}"; do
-        if [ -x "$p" ] && check_version "$p"; then
-            JAVA_BIN="$p"
-            return 0
-        fi
-    done
-    
-    # Последний шанс — java в PATH, но только если это версия 1.8
-    if command -v java &>/dev/null; then
-        if check_version "java"; then
-            JAVA_BIN="$(command -v java)"
+    # Проверяем, установлена ли Java 8 внутри proot-distro (ubuntu)
+    if ! command -v proot-distro &>/dev/null; then
+        return 1
+    fi
+    # Проверяем статус инсталляции ubuntu
+    if ! proot-distro list | grep -q "ubuntu.*installed"; then
+        return 1
+    fi
+    # Проверяем наличие java внутри
+    if proot-distro login ubuntu -- command -v java &>/dev/null; then
+        # Проверяем версию (должна быть 1.8)
+        if proot-distro login ubuntu -- java -version 2>&1 | grep -q 'version "1\.8'; then
+            JAVA_BIN="proot-distro (ubuntu/java8)"
             return 0
         fi
     fi
@@ -272,14 +260,20 @@ patch_server() {
 }
 
 # Генерация start.sh (использует найденную java)
+# Генерация start.sh (использует proot-distro)
 make_start_sh() {
     local sv_dir="$1" name="$2" ram="$3" port="$4"
-    find_java
+    # Мы используем proot-distro для запуска
+    # --bind "$sv_dir:/server" монтирует папку сервера в /server внутри Linux
     cat > "$sv_dir/start.sh" << EOF
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$sv_dir"
-echo "[$name] Запуск (RAM: $ram, Port: $port)..."
-"$JAVA_BIN" -Xmx$ram -Xms$ram -jar server.jar nogui
+echo "[$name] Запуск через Proot Ubuntu (Java 8)..."
+echo "RAM: $ram, Port: $port"
+
+# Запуск Java внутри Ubuntu
+# Папка сервера пробрасывается как /server
+proot-distro login ubuntu --bind "$sv_dir:/server" -- java -Xmx$ram -Xms$ram -jar /server/server.jar nogui
 EOF
     chmod +x "$sv_dir/start.sh"
 }
@@ -290,118 +284,44 @@ EOF
 
 install_java() {
     echo ""
-    echo "=== Установка Java 8 (Hax4us + Patch) ==="
-    echo "Используем нативную сборку с патчем совместимости библиотек."
+    echo "=== Установка Java 8 (Proot-Distro/Ubuntu) ==="
+    echo "Это самый надежный способ запуска Java 8 на Android."
+    echo "Будет установлена Ubuntu (~80MB) и OpenJDK 8 внутри неё."
     echo ""
 
-    # Определение архитектуры
-    local arch
-    arch=$(uname -m)
-    local download_url=""
-    
-    case "$arch" in
-        aarch64)
-            echo "Архитектура: aarch64"
-            download_url="$JDK8_AARCH64_URL"
-            ;;
-        arm*|abc)
-            echo "Архитектура: arm ($arch)"
-            download_url="$JDK8_ARM_URL"
-            ;;
-        *)
-            echo "ОШИБКА: Архитектура '$arch' не поддерживается."
-            return 1
-            ;;
-    esac
-
-    if ! command -v wget &>/dev/null; then
-        echo "Устанавливаю wget..."
-        pkg install -y wget
+    # 1. Установка proot-distro
+    if ! command -v proot-distro &>/dev/null; then
+        echo "[1/4] Установка proot-distro..."
+        pkg install -y proot-distro
     fi
 
-    local tmp_jdk="jdk8.tar.gz"
-    local install_dir="$PREFIX/share"
-    local jdk_dir="$install_dir/jdk8"
-
-    echo "[1/5] Скачивание JDK 8..."
-    if ! wget -O "$tmp_jdk" "$download_url"; then
-        echo "ОШИБКА: Не удалось скачать Java!"
-        rm -f "$tmp_jdk"
-        return 1
-    fi
-
-    echo "[2/5] Распаковка..."
-    mkdir -p "$install_dir"
-    rm -rf "$jdk_dir"
-    
-    if ! tar -xf "$tmp_jdk" -C "$install_dir"; then
-        echo "ОШИБКА: Архив поврежден."
-        rm -f "$tmp_jdk"
-        return 1
-    fi
-    rm -f "$tmp_jdk"
-
-    # Проверка папки распаковки
-    if [ ! -d "$jdk_dir" ]; then
-        local found_dir
-        found_dir=$(find "$install_dir" -maxdepth 1 -type d -name "jdk8*" | head -1)
-        if [ -n "$found_dir" ]; then
-            jdk_dir="$found_dir"
-        else
-            echo "ОШИБКА: Не найдена папка jdk8."
+    # 2. Установка Ubuntu
+    if ! proot-distro list | grep -q "ubuntu.*installed"; then
+        echo "[2/4] Скачивание и установка Ubuntu..."
+        proot-distro install ubuntu
+        if [ $? -ne 0 ]; then
+            echo "ОШИБКА: Не удалось установить Ubuntu."
             return 1
         fi
+    else
+        echo "[2/4] Ubuntu уже установлена."
     fi
 
-    echo "[3/5] Применение патчей совместимости..."
-    # FIX: libpthread.so.0 (glibc) -> libc.so (bionic)
-    # Это ключевой момент для запуска этой сборки на новых Android
-    if [ ! -f "$PREFIX/lib/libpthread.so.0" ]; then
-        echo "  -> Создаю симлинк libpthread.so.0..."
-        ln -s "$PREFIX/lib/libc.so" "$PREFIX/lib/libpthread.so.0"
-    fi
-    
-    # FIX: libz.so.1 (на всякий случай)
-    if [ ! -f "$PREFIX/lib/libz.so.1" ] && [ -f "$PREFIX/lib/libz.so" ]; then
-         echo "  -> Создаю симлинк libz.so.1..."
-         ln -s "$PREFIX/lib/libz.so" "$PREFIX/lib/libz.so.1"
-    fi
+    # 3. Обновление пакетов внутри Ubuntu
+    echo "[3/4] Обновление пакетов внутри Ubuntu (apt update)..."
+    proot-distro login ubuntu -- apt update -y
 
-    echo "[4/5] Настройка путей..."
-    chmod -R 755 "$jdk_dir/bin"
-    local bin_java="$PREFIX/bin/java"
-    if [ -f "$bin_java" ] && [ ! -L "$bin_java" ]; then
-        mv "$bin_java" "${bin_java}.bak"
-    fi
-    rm -f "$bin_java"
-    ln -s "$jdk_dir/bin/java" "$bin_java"
+    # 4. Установка Java 8
+    echo "[4/4] Установка OpenJDK 8..."
+    proot-distro login ubuntu -- apt install -y openjdk-8-jre-headless
 
-    # Переменные окружения
-    export JAVA_HOME="$jdk_dir"
-    export PATH="$JAVA_HOME/bin:$PATH"
-    if ! grep -q "JAVA_HOME.*jdk8" "$HOME/.bashrc"; then
-        echo "export JAVA_HOME=$jdk_dir" >> "$HOME/.bashrc"
-        echo "export PATH=\$JAVA_HOME/bin:\$PATH" >> "$HOME/.bashrc"
-    fi
-
-    echo "[5/5] Проверка..."
-    # Сброс кэша команд
-    hash -r 2>/dev/null
-    
-    if "$bin_java" -version &>/dev/null; then
-        local ver
-        ver=$("$bin_java" -version 2>&1 | head -1)
-        echo ""
-        echo "УСПЕХ: Установлена $ver"
-        echo "Путь: $bin_java"
+    echo ""
+    echo "Проверка..."
+    if find_java; then
+        echo "УСПЕХ: Java 8 установлена в Ubuntu!"
         return 0
     else
-        echo "ОШИБКА: Java не запускается даже с патчем."
-        echo "Попробуйте вручную:"
-        echo "export LD_LIBRARY_PATH=$PREFIX/lib"
-        echo "$bin_java -version"
-        echo "Вывод ошибки:"
-        "$bin_java" -version
+        echo "ОШИБКА: Java не найдена внутри Ubuntu."
         return 1
     fi
 }
@@ -413,10 +333,10 @@ check_deps_status() {
     # Java
     if find_java; then
         local jver
-        jver=$("$JAVA_BIN" -version 2>&1 | head -1)
-        result+="Java:           OK  ($jver)\n"
+        jver=$(proot-distro login ubuntu -- java -version 2>&1 | head -1)
+        result+="Java (Proot):       OK  ($jver)\n"
     else
-        result+="Java:           НЕТ\n"
+        result+="Java (Proot):       НЕТ\n"
         all_ok=false
     fi
 
