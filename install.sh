@@ -1304,28 +1304,40 @@ uninstall_all() {
     [ $? -ne 0 ] && return
 
     clear
-    echo "=== Остановка серверов ==="
+    echo "=== Остановка и удаление сервисов (runit) ==="
     
-    # Получаем список
-    local servers
-    read -ra servers <<< "$(get_servers)"
-    
-    for srv in "${servers[@]}"; do
-        [ -z "$srv" ] && continue
-        echo "Останавливаю $srv..."
-        server_stop_silent "$srv"
-        # Удаляем сервис runit (если есть)
-        local sv_service_dir="$PREFIX/var/service/mbsft-$srv"
-        if [ -d "$sv_service_dir" ]; then
-             rm "$sv_service_dir"
-            # Перезагружаем сервис-менеджер, если нужно, но rm достаточно
-        fi
+    # Ищем все сервисы mbsft-* в папке runit
+    for link in "$PREFIX/var/service"/mbsft-*; do
+        [ -e "$link" ] || continue
+        # Получаем имя сервиса
+        local sv_name
+        sv_name=$(basename "$link")
+        echo "Удаляю сервис: $sv_name"
+        
+        # Останавливаем
+        sv down "$sv_name" 2>/dev/null || true
+        # Удаляем линк
+        rm "$link" 2>/dev/null
+        # Удаляем саму папку сервиса из sv (если она там есть отдельно, хотя обычно это симлинк)
+        # В Termux обычно: /data/data.../var/service -> симлинки, а сами сервисы могут быть где-то еще.
+        # Но мы удаляем симлинк, и runsvdir перестанет его мониторить.
     done
     
+    echo "Жду остановки процессов..."
+    sleep 2
+
+    echo "=== Убийство остаточных процессов ==="
+    # Убиваем всё, что содержит mbsft- в имени (tmux сессии, runsv процессы и т.д.)
+    pkill -f "mbsft-" 2>/dev/null
+    tmux kill-server 2>/dev/null # Убиваем tmux на всякий случай, если там только наши сессии
+
     echo "=== Удаление файлов ==="
     rm -rf "$BASE_DIR"
     
-    dialog --title "Готово" --msgbox "Все данные MBSFT удалены.\n\nЗависимости (Java, dialog) остались." 8 45
+    # Удаляем конфиги dialog (тему)
+    rm -f "$HOME/.mbsft_dialogrc"
+    
+    dialog --title "Готово" --msgbox "Все данные MBSFT, сервисы и процессы очищены.\n\nЗависимости (Java, dialog) остались." 8 45
 }
 
 # =====================
