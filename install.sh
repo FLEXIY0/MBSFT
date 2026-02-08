@@ -84,18 +84,21 @@ TITLE="MBSFT v${VERSION}"
 
 get_ip() {
     local ip=""
-    # 1. iproute2 (ip addr)
-    if command -v ip &>/dev/null; then
+    # 1. curl ifconfig.me (самый надёжный)
+    if command -v curl &>/dev/null; then
+        ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null)
+    fi
+    # 2. iproute2 (ip addr)
+    if [ -z "$ip" ] && command -v ip &>/dev/null; then
         ip=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
         [ -z "$ip" ] && ip=$(ip addr show eth0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
-        [ -z "$ip" ] && ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+')
     fi
-    # 2. net-tools (ifconfig)
+    # 3. net-tools (ifconfig)
     if [ -z "$ip" ] && command -v ifconfig &>/dev/null; then
         ip=$(ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}')
         [ -z "$ip" ] && ip=$(ifconfig eth0 2>/dev/null | grep 'inet ' | awk '{print $2}')
     fi
-    # 3. termux-wifi-connectioninfo
+    # 4. termux-wifi-connectioninfo
     if [ -z "$ip" ] && command -v termux-wifi-connectioninfo &>/dev/null; then
         ip=$(termux-wifi-connectioninfo 2>/dev/null | grep '"ip"' | cut -d'"' -f4)
     fi
