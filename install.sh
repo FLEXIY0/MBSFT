@@ -27,22 +27,37 @@ JAVA_BIN=""
 # Поиск Java
 # =====================
 find_java() {
-    # Проверяем, установлена ли Java 8 внутри proot-distro (ubuntu)
-    if ! command -v proot-distro &>/dev/null; then
-        return 1
-    fi
-    # Проверяем статус инсталляции ubuntu
-    if ! proot-distro list | grep -q "ubuntu.*installed"; then
-        return 1
-    fi
-    # Проверяем наличие java внутри
-    if proot-distro login ubuntu -- command -v java &>/dev/null; then
-        # Проверяем версию (должна быть 1.8)
-        if proot-distro login ubuntu -- java -version 2>&1 | grep -q 'version "1\.8'; then
-            JAVA_BIN="proot-distro (ubuntu/java8)"
-            return 0
+    # 1. Проверяем Java 8 внутри proot-distro (Ubuntu)
+    if command -v proot-distro &>/dev/null; then
+        # Простая проверка: если java запускается и выдает версию
+        if proot-distro login ubuntu -- java -version &>/dev/null; then
+             # Дополнительно проверим, что это версия 1.8
+             if proot-distro login ubuntu -- java -version 2>&1 | grep -q 'version "1\.8'; then
+                 JAVA_BIN="proot-distro (ubuntu/java8)"
+                 return 0
+             fi
         fi
     fi
+
+    # 2. Проверяем нативную Java 8 (Hax4us/Package)
+    # Если Proot не найден или там нет Java, ищем локально
+    local paths=(
+        "$PREFIX/share/jdk8/bin/java"
+        "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
+        "$HOME/.jdk8/bin/java"
+    )
+    
+    check_version() {
+        "$1" -version 2>&1 | grep -q 'version "1\.8'
+    }
+
+    for p in "${paths[@]}"; do
+        if [ -x "$p" ] && check_version "$p"; then
+            JAVA_BIN="$p"
+            return 0
+        fi
+    done
+
     return 1
 }
 
@@ -259,20 +274,35 @@ patch_server() {
 
 # Генерация start.sh (использует найденную java)
 # Генерация start.sh (использует proot-distro)
+# Генерация start.sh (использует proot-distro или нативную java)
 make_start_sh() {
     local sv_dir="$1" name="$2" ram="$3" port="$4"
-    # Мы используем proot-distro для запуска
-    # --bind "$sv_dir:/server" монтирует папку сервера в /server внутри Linux
-    cat > "$sv_dir/start.sh" << EOF
+    
+    # Убедимся, что JAVA_BIN актуальна
+    find_java
+
+    if [[ "$JAVA_BIN" == *"proot-distro"* ]]; then
+        # Режим Proot:
+        # --bind "$sv_dir:/server" монтирует папку сервера в /server внутри Linux
+        cat > "$sv_dir/start.sh" << EOF
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$sv_dir"
 echo "[$name] Запуск через Proot Ubuntu (Java 8)..."
 echo "RAM: $ram, Port: $port"
 
 # Запуск Java внутри Ubuntu
-# Папка сервера пробрасывается как /server
 proot-distro login ubuntu --bind "$sv_dir:/server" -- java -Xmx$ram -Xms$ram -jar /server/server.jar nogui
 EOF
+    else
+        # Режим Native:
+        cat > "$sv_dir/start.sh" << EOF
+#!/data/data/com.termux/files/usr/bin/bash
+cd "$sv_dir"
+echo "[$name] Запуск (Native Java 8)..."
+echo "RAM: $ram, Port: $port"
+"$JAVA_BIN" -Xmx$ram -Xms$ram -jar server.jar nogui
+EOF
+    fi
     chmod +x "$sv_dir/start.sh"
 }
 
