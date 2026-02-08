@@ -27,10 +27,13 @@ JAVA_BIN=""
 # Поиск Java
 # =====================
 find_java() {
-    # Кэширование: если уже нашли, не проверяем снова (ускоряет меню)
+    # Кэширование: если уже нашли, не проверяем снова
     if [ -n "$JAVA_BIN" ] && [ "$_JAVA_CHECKED" == "true" ]; then
         return 0
     fi
+    
+    # Сброс кэша версии
+    _CACHED_JVER=""
 
     # 1. Проверяем Java 8 внутри proot-distro (Ubuntu)
     if command -v proot-distro &>/dev/null; then
@@ -443,14 +446,15 @@ check_deps_status() {
 
     # Java
     if find_java; then
-        local jver
-        if [[ "$JAVA_BIN" == *"proot"* ]]; then
-            # Очистка вывода от ANSI кодов и Warning'ов про CPU
-            jver=$(proot-distro login ubuntu -- java -version 2>&1 | grep "version" | head -1 | sed 's/\x1b\[[0-9;]*m//g' | sed 's/Warning.*//g')
-        else
-            jver=$("$JAVA_BIN" -version 2>&1 | head -1)
+        if [ -z "$_CACHED_JVER" ]; then
+            if [[ "$JAVA_BIN" == *"proot"* ]]; then
+                # Очистка вывода от ANSI кодов и Warning'ов
+                _CACHED_JVER=$(proot-distro login ubuntu -- java -version 2>&1 | grep "version" | head -1 | sed 's/\x1b\[[0-9;]*m//g' | sed 's/Warning.*//g')
+            else
+                _CACHED_JVER=$("$JAVA_BIN" -version 2>&1 | head -1)
+            fi
         fi
-        result+="Java:              OK  ($jver)\n"
+        result+="Java:              OK  ($_CACHED_JVER)\n"
     else
         result+="Java:              НЕТ\n"
         all_ok=false
@@ -1132,4 +1136,8 @@ main_loop() {
 # =====================
 # Main
 # =====================
+# Предварительный поиск Java (кэширование) для ускорения меню
+echo "Загрузка..."
+find_java &>/dev/null
+
 main_loop
