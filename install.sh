@@ -250,7 +250,9 @@ get_servers() {
 }
 
 is_server_running() {
-    screen -list 2>/dev/null | grep -q "\.mbsft-${1}[[:space:]]"
+    local name="$1"
+    # Ищем сессию, исключая Dead (мертвые) и Socket (заголовки)
+    screen -list 2>/dev/null | grep -v "Dead" | grep -q "\.mbsft-${name}[[:space:]]"
 }
 
 get_actual_port() {
@@ -853,6 +855,9 @@ server_manage_menu() {
 server_start() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
+    
+    # Очищаем мертвые сессии перед стартом
+    screen -wipe >/dev/null 2>&1
 
     if is_server_running "$name"; then
         dialog --title "$name" --msgbox "Уже запущен!" 6 30
