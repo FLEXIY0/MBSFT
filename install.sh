@@ -2,34 +2,46 @@
 
 # ============================================
 # MBSFT — Minecraft Beta Server For Termux
-# Мульти-сервер менеджер
+# Мульти-сервер менеджер (dialog UI)
 # ============================================
 
-# Цвета
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# Перенаправляем stdin с терминала (нужно для curl | bash)
+exec < /dev/tty
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
 JAVA8_PATH="/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
 POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
-VERSION="2.0"
+VERSION="2.1"
+
+# =====================
+# Bootstrap: dialog
+# =====================
+if ! command -v dialog &>/dev/null; then
+    echo "Устанавливаю dialog..."
+    pkg install -y dialog 2>/dev/null || {
+        apt update -y && apt install -y dialog
+    }
+fi
+
+if ! command -v dialog &>/dev/null; then
+    echo "Ошибка: не удалось установить dialog"
+    exit 1
+fi
+
+# Проверка Termux
+if [ ! -d "/data/data/com.termux" ]; then
+    dialog --title "Ошибка" --msgbox "Этот скрипт только для Termux!" 6 40
+    exit 1
+fi
+
+mkdir -p "$BASE_DIR"
 
 # =====================
 # Утилиты
 # =====================
 
-check_termux() {
-    if [ ! -d "/data/data/com.termux" ]; then
-        echo -e "${RED}Этот скрипт только для Termux!${NC}"
-        exit 1
-    fi
-}
+TITLE="MBSFT v${VERSION}"
 
 get_ip() {
     local ip=""
@@ -39,48 +51,18 @@ get_ip() {
     if [ -z "$ip" ] && command -v ip &>/dev/null; then
         ip=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
     fi
-    echo "${ip:-?}"
+    echo "${ip:-не определён}"
 }
 
-show_logo() {
-    clear
-    echo -e "${CYAN}"
-    echo " __  __  ____   _____ ______ _______ "
-    echo "|  \/  ||  _ \ / ____|  ____|__   __|"
-    echo "| \  / || |_) | (___ | |__     | |   "
-    echo "| |\/| ||  _ < \___ \|  __|    | |   "
-    echo "| |  | || |_) |____) | |       | |   "
-    echo "|_|  |_||____/|_____/|_|       |_|   "
-    echo -e "${BOLD}Minecraft Beta Server For Termux v${VERSION}${NC}"
-    echo ""
+deps_installed() {
+    [ -f "$JAVA8_PATH" ] && command -v screen &>/dev/null && command -v wget &>/dev/null
 }
 
-pause() {
-    read -p "Enter для продолжения..."
-}
-
-# Валидация имени сервера
 validate_name() {
-    local name="$1"
-    if [ -z "$name" ]; then
-        return 1
-    fi
-    if ! echo "$name" | grep -qE '^[a-zA-Z0-9_-]+$'; then
-        echo -e "${RED}Имя может содержать только: буквы, цифры, _ и -${NC}"
-        return 1
-    fi
-    if [ ${#name} -gt 32 ]; then
-        echo -e "${RED}Имя слишком длинное (макс 32 символа)${NC}"
-        return 1
-    fi
-    return 0
+    echo "$1" | grep -qE '^[a-zA-Z0-9_-]+$'
 }
 
-# =====================
 # Конфиг сервера
-# =====================
-
-# Записать конфиг сервера
 write_server_conf() {
     local dir="$1" name="$2" ram="$3" port="$4" core="$5"
     cat > "$dir/.mbsft.conf" << EOF
@@ -92,44 +74,31 @@ CREATED=$(date '+%Y-%m-%d %H:%M')
 EOF
 }
 
-# Прочитать конфиг сервера
 read_server_conf() {
     local dir="$1"
     if [ -f "$dir/.mbsft.conf" ]; then
         source "$dir/.mbsft.conf"
     else
         NAME=$(basename "$dir")
-        RAM="1G"
-        PORT="25565"
-        CORE="unknown"
-        CREATED="?"
+        RAM="1G"; PORT="25565"; CORE="unknown"; CREATED="?"
     fi
 }
 
-# Получить список всех серверов (папки с .mbsft.conf или server.jar)
 get_servers() {
     local servers=()
-    if [ -d "$BASE_DIR" ]; then
-        for d in "$BASE_DIR"/*/; do
-            [ -d "$d" ] || continue
-            if [ -f "$d/.mbsft.conf" ] || [ -f "$d/server.jar" ]; then
-                servers+=("$(basename "$d")")
-            fi
-        done
-    fi
+    for d in "$BASE_DIR"/*/; do
+        [ -d "$d" ] || continue
+        if [ -f "$d/.mbsft.conf" ] || [ -f "$d/server.jar" ]; then
+            servers+=("$(basename "$d")")
+        fi
+    done
     echo "${servers[@]}"
 }
 
-# Проверить запущен ли сервер (screen сессия)
 is_server_running() {
-    local name="$1"
-    if screen -list 2>/dev/null | grep -q "\.mbsft-${name}[[:space:]]"; then
-        return 0
-    fi
-    return 1
+    screen -list 2>/dev/null | grep -q "\.mbsft-${1}[[:space:]]"
 }
 
-# Получить порт из server.properties
 get_actual_port() {
     local dir="$1"
     if [ -f "$dir/server.properties" ]; then
@@ -140,342 +109,268 @@ get_actual_port() {
     fi
 }
 
-# =====================
-# Проверка зависимостей
-# =====================
-
-deps_installed() {
-    [ -f "$JAVA8_PATH" ] && command -v screen &>/dev/null && command -v wget &>/dev/null
+next_free_port() {
+    local port=25565
+    local existing=()
+    for srv in $(get_servers); do
+        existing+=("$(get_actual_port "$BASE_DIR/$srv")")
+    done
+    while printf '%s\n' "${existing[@]}" | grep -qx "$port" 2>/dev/null; do
+        port=$((port + 1))
+    done
+    echo "$port"
 }
 
-step_deps() {
-    show_logo
-    echo -e "${CYAN}${BOLD}[Установка зависимостей]${NC}"
-    echo ""
+# Патч конфигов сервера
+patch_server() {
+    local sv_dir="$1" port="$2"
+    if [ -f "$sv_dir/eula.txt" ]; then
+        sed -i 's/eula=false/eula=true/g' "$sv_dir/eula.txt"
+    fi
+    if [ -f "$sv_dir/server.properties" ]; then
+        sed -i "s/online-mode=true/online-mode=false/g" "$sv_dir/server.properties"
+        sed -i "s/verify-names=true/verify-names=false/g" "$sv_dir/server.properties"
+        sed -i "s/server-ip=.*/server-ip=/g" "$sv_dir/server.properties"
+        sed -i "s/server-port=.*/server-port=$port/g" "$sv_dir/server.properties"
+    fi
+}
 
+# Генерация start.sh
+make_start_sh() {
+    local sv_dir="$1" name="$2" ram="$3" port="$4"
+    cat > "$sv_dir/start.sh" << EOF
+#!/data/data/com.termux/files/usr/bin/bash
+cd "$sv_dir"
+echo "[$name] Запуск (RAM: $ram, Port: $port)..."
+"$JAVA8_PATH" -Xmx$ram -Xms$ram -jar server.jar nogui
+EOF
+    chmod +x "$sv_dir/start.sh"
+}
+
+# =====================
+# 1. Зависимости
+# =====================
+
+step_deps() {
     if deps_installed; then
-        echo -e "${GREEN}Все зависимости уже установлены!${NC}"
-        echo -e "  Java 8: $($JAVA8_PATH -version 2>&1 | head -1)"
-        pause
+        local jver
+        jver=$("$JAVA8_PATH" -version 2>&1 | head -1)
+        dialog --title "$TITLE" --msgbox "Всё уже установлено!\n\nJava 8: $jver\nscreen: $(which screen)\nwget: $(which wget)" 10 50
         return
     fi
 
-    echo -e "${CYAN}Обновление пакетов...${NC}"
-    pkg update -y && pkg upgrade -y
+    dialog --title "$TITLE" --yesno "Установить зависимости?\n\n• Java 8 (OpenJDK)\n• screen\n• wget\n• openssh\n• net-tools\n• termux-services" 14 44
+    [ $? -ne 0 ] && return
 
-    echo -e "${CYAN}Установка...${NC}"
+    clear
+    echo "=== Установка зависимостей ==="
+    echo ""
+    pkg update -y && pkg upgrade -y
     pkg install -y tur-repo
     pkg install -y wget screen termux-services openssh net-tools
     pkg install -y openjdk-8
+    echo ""
 
     if [ -f "$JAVA8_PATH" ]; then
-        echo -e "${GREEN}Готово! Java 8: $($JAVA8_PATH -version 2>&1 | head -1)${NC}"
+        echo "OK! Нажми Enter..."
+        read -r
     else
-        echo -e "${RED}Java 8 не найдена. Перезапусти Termux и попробуй снова.${NC}"
+        echo "ОШИБКА: Java 8 не найдена. Перезапусти Termux."
+        read -r
     fi
-    pause
 }
 
 # =====================
-# Создание сервера
+# 2. Создание сервера
 # =====================
 
 create_server() {
-    show_logo
-    echo -e "${CYAN}${BOLD}[Создание нового сервера]${NC}"
-    echo ""
-
-    # Проверка зависимостей
     if ! deps_installed; then
-        echo -e "${RED}Сначала установи зависимости (пункт 1)!${NC}"
-        pause
+        dialog --title "$TITLE" --msgbox "Сначала установи зависимости! (пункт 1)" 6 50
         return
     fi
 
     # Имя
-    read -p "Имя сервера (англ, без пробелов): " SV_NAME
-    if ! validate_name "$SV_NAME"; then
-        pause
+    local name
+    name=$(dialog --title "Новый сервер" --inputbox "Имя сервера (англ, без пробелов):" 8 50 "" 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
+    if [ -z "$name" ] || ! validate_name "$name"; then
+        dialog --title "Ошибка" --msgbox "Имя может содержать только буквы, цифры, _ и -" 6 50
         return
     fi
 
-    local SV_DIR="$BASE_DIR/$SV_NAME"
-
-    if [ -d "$SV_DIR" ] && [ -f "$SV_DIR/server.jar" ]; then
-        echo -e "${RED}Сервер '$SV_NAME' уже существует!${NC}"
-        pause
+    local sv_dir="$BASE_DIR/$name"
+    if [ -d "$sv_dir" ] && [ -f "$sv_dir/server.jar" ]; then
+        dialog --title "Ошибка" --msgbox "Сервер '$name' уже существует!" 6 44
         return
     fi
 
     # RAM
-    read -p "RAM (512M / 1G / 2G) [1G]: " SV_RAM
-    SV_RAM=${SV_RAM:-1G}
-    if ! echo "$SV_RAM" | grep -qE '^[0-9]+[MG]$'; then
-        echo -e "${RED}Неверный формат RAM!${NC}"
-        pause
-        return
-    fi
+    local ram
+    ram=$(dialog --title "Новый сервер: $name" --menu "Сколько RAM выделить?" 12 44 4 \
+        "512M" "Для слабых устройств" \
+        "1G"   "Рекомендуется" \
+        "2G"   "Для мощных устройств" \
+        "4G"   "Максимум" \
+        3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
 
     # Порт
-    local DEFAULT_PORT=25565
-    # Авто-подбор свободного порта
-    local existing_ports=()
-    for srv in $(get_servers); do
-        local p
-        p=$(get_actual_port "$BASE_DIR/$srv")
-        existing_ports+=("$p")
-    done
-    while printf '%s\n' "${existing_ports[@]}" | grep -qx "$DEFAULT_PORT" 2>/dev/null; do
-        DEFAULT_PORT=$((DEFAULT_PORT + 1))
-    done
-
-    read -p "Порт [$DEFAULT_PORT]: " SV_PORT
-    SV_PORT=${SV_PORT:-$DEFAULT_PORT}
-    if ! echo "$SV_PORT" | grep -qE '^[0-9]+$'; then
-        echo -e "${RED}Порт должен быть числом!${NC}"
-        pause
-        return
-    fi
+    local default_port
+    default_port=$(next_free_port)
+    local port
+    port=$(dialog --title "Новый сервер: $name" --inputbox "Порт сервера:" 8 40 "$default_port" 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
 
     # Ядро
-    echo ""
-    echo "Ядро:"
-    echo "  1) Project Poseidon (Beta 1.7.3 — рекомендуется)"
-    echo "  2) Закину server.jar вручную"
-    read -p "Выбор [1]: " CORE_CHOICE
-    CORE_CHOICE=${CORE_CHOICE:-1}
+    local core_choice
+    core_choice=$(dialog --title "Новый сервер: $name" --menu "Ядро сервера:" 10 54 2 \
+        "poseidon" "Project Poseidon (Beta 1.7.3)" \
+        "custom"   "Закину server.jar вручную" \
+        3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
 
-    mkdir -p "$SV_DIR"
+    mkdir -p "$sv_dir"
 
-    local CORE_NAME="custom"
-    if [ "$CORE_CHOICE" == "1" ]; then
-        CORE_NAME="poseidon"
-        echo -e "${CYAN}Скачиваю Project Poseidon...${NC}"
-        if ! wget -O "$SV_DIR/server.jar" "$POSEIDON_URL"; then
-            echo -e "${RED}Ошибка загрузки!${NC}"
-            rm -f "$SV_DIR/server.jar"
-            pause
+    if [ "$core_choice" == "poseidon" ]; then
+        clear
+        echo "=== Скачиваю Project Poseidon ==="
+        echo ""
+        if ! wget -O "$sv_dir/server.jar" "$POSEIDON_URL"; then
+            rm -f "$sv_dir/server.jar"
+            dialog --title "Ошибка" --msgbox "Не удалось скачать ядро! Проверь интернет." 6 50
             return
         fi
-        echo -e "${GREEN}Ядро скачано.${NC}"
     else
-        echo ""
-        echo -e "Закинь ${BOLD}server.jar${NC} в папку:"
-        echo -e "${CYAN}$SV_DIR/${NC}"
-        echo ""
-        read -p "Файл на месте? (y/n): " READY
-        if [ "$READY" != "y" ] || [ ! -f "$SV_DIR/server.jar" ]; then
-            echo -e "${YELLOW}Когда закинешь — зайди в управление сервером.${NC}"
+        dialog --title "$name" --msgbox "Закинь server.jar в папку:\n\n$sv_dir/\n\nЗатем зайди в управление сервером." 10 54
+    fi
+
+    make_start_sh "$sv_dir" "$name" "$ram" "$port"
+    write_server_conf "$sv_dir" "$name" "$ram" "$port" "$core_choice"
+
+    # Первый запуск
+    if [ -f "$sv_dir/server.jar" ]; then
+        dialog --title "$name" --yesno "Сервер создан!\n\nЗапустить первый раз для генерации конфигов?\n(Нужно будет нажать Ctrl+C после загрузки)" 10 54
+        if [ $? -eq 0 ]; then
+            clear
+            echo "=== Первый запуск $name ==="
+            echo "Нажми Ctrl+C после загрузки"
+            echo ""
+            cd "$sv_dir" && ./start.sh || true
+            patch_server "$sv_dir" "$port"
+            echo ""
+            echo "Готово! Нажми Enter..."
+            read -r
         fi
     fi
 
-    # start.sh
-    cat > "$SV_DIR/start.sh" << EOF
-#!/data/data/com.termux/files/usr/bin/bash
-cd "$SV_DIR"
-echo "[$SV_NAME] Запуск (RAM: $SV_RAM, Port: $SV_PORT)..."
-"$JAVA8_PATH" -Xmx$SV_RAM -Xms$SV_RAM -jar server.jar nogui
-EOF
-    chmod +x "$SV_DIR/start.sh"
-
-    # Конфиг
-    write_server_conf "$SV_DIR" "$SV_NAME" "$SV_RAM" "$SV_PORT" "$CORE_NAME"
-
-    echo ""
-    echo -e "${GREEN}${BOLD}Сервер '$SV_NAME' создан!${NC}"
-    echo -e "  Папка: $SV_DIR"
-    echo -e "  RAM:   $SV_RAM"
-    echo -e "  Порт:  $SV_PORT"
-    echo ""
-
-    # Предлагаем первый запуск
-    if [ -f "$SV_DIR/server.jar" ]; then
-        read -p "Выполнить первый запуск (генерация конфигов)? (y/n) [y]: " FIRST_RUN
-        FIRST_RUN=${FIRST_RUN:-y}
-        if [ "$FIRST_RUN" == "y" ]; then
-            echo -e "${YELLOW}Дождись загрузки, затем Ctrl+C...${NC}"
-            cd "$SV_DIR" && ./start.sh || true
-
-            # EULA
-            if [ -f "$SV_DIR/eula.txt" ]; then
-                sed -i 's/eula=false/eula=true/g' "$SV_DIR/eula.txt"
-                echo -e "${GREEN}EULA принята.${NC}"
-            fi
-
-            # Патч server.properties
-            if [ -f "$SV_DIR/server.properties" ]; then
-                sed -i "s/online-mode=true/online-mode=false/g" "$SV_DIR/server.properties"
-                sed -i "s/verify-names=true/verify-names=false/g" "$SV_DIR/server.properties"
-                sed -i "s/server-ip=.*/server-ip=/g" "$SV_DIR/server.properties"
-                sed -i "s/server-port=.*/server-port=$SV_PORT/g" "$SV_DIR/server.properties"
-                echo -e "${GREEN}Настройки применены (online-mode=false, port=$SV_PORT).${NC}"
-            fi
-        fi
-    fi
-
-    pause
+    dialog --title "$TITLE" --msgbox "Сервер '$name' создан!\n\nПапка: $sv_dir\nRAM: $ram\nПорт: $port\n\nУправляй через «Мои серверы»" 12 50
 }
 
 # =====================
-# Быстрое создание
+# 3. Быстрое создание
 # =====================
 
 quick_create() {
-    show_logo
-    echo -e "${CYAN}${BOLD}[Быстрое создание сервера]${NC}"
-    echo ""
-
     if ! deps_installed; then
-        echo -e "${YELLOW}Сначала установлю зависимости...${NC}"
-        pkg update -y && pkg upgrade -y
-        pkg install -y tur-repo
-        pkg install -y wget screen termux-services openssh net-tools
-        pkg install -y openjdk-8
-        if [ ! -f "$JAVA8_PATH" ]; then
-            echo -e "${RED}Java 8 не установилась!${NC}"
-            pause
+        dialog --title "$TITLE" --yesno "Зависимости не установлены.\nУстановить сейчас?" 7 44
+        if [ $? -eq 0 ]; then
+            clear
+            echo "=== Установка зависимостей ==="
+            echo ""
+            pkg update -y && pkg upgrade -y
+            pkg install -y tur-repo
+            pkg install -y wget screen termux-services openssh net-tools
+            pkg install -y openjdk-8
+            if [ ! -f "$JAVA8_PATH" ]; then
+                echo "ОШИБКА: Java не установилась!"
+                read -r
+                return
+            fi
+        else
             return
         fi
-        echo -e "${GREEN}Зависимости ✓${NC}"
-        echo ""
     fi
 
-    read -p "Имя сервера: " SV_NAME
-    if ! validate_name "$SV_NAME"; then
-        pause
+    local name
+    name=$(dialog --title "Быстрое создание" --inputbox "Имя сервера:" 8 44 "" 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
+    if [ -z "$name" ] || ! validate_name "$name"; then
+        dialog --title "Ошибка" --msgbox "Неверное имя!" 6 30
         return
     fi
 
-    local SV_DIR="$BASE_DIR/$SV_NAME"
-    if [ -d "$SV_DIR" ] && [ -f "$SV_DIR/server.jar" ]; then
-        echo -e "${RED}Сервер '$SV_NAME' уже существует!${NC}"
-        pause
+    local sv_dir="$BASE_DIR/$name"
+    if [ -d "$sv_dir" ] && [ -f "$sv_dir/server.jar" ]; then
+        dialog --title "Ошибка" --msgbox "Сервер '$name' уже существует!" 6 44
         return
     fi
 
-    # Авто-подбор порта
-    local SV_PORT=25565
-    local existing_ports=()
-    for srv in $(get_servers); do
-        local p
-        p=$(get_actual_port "$BASE_DIR/$srv")
-        existing_ports+=("$p")
-    done
-    while printf '%s\n' "${existing_ports[@]}" | grep -qx "$SV_PORT" 2>/dev/null; do
-        SV_PORT=$((SV_PORT + 1))
-    done
+    local port
+    port=$(next_free_port)
 
+    dialog --title "Быстрое создание" --yesno "Создать сервер:\n\nИмя:   $name\nЯдро:  Project Poseidon (Beta 1.7.3)\nRAM:   1G\nПорт:  $port" 12 44
+    [ $? -ne 0 ] && return
+
+    mkdir -p "$sv_dir"
+
+    clear
+    echo "=== Быстрое создание: $name ==="
     echo ""
-    echo "Ядро:    Project Poseidon (Beta 1.7.3)"
-    echo "RAM:     1G"
-    echo "Порт:    $SV_PORT"
-    echo ""
-    read -p "Создать? (y/n) [y]: " CONFIRM
-    CONFIRM=${CONFIRM:-y}
-    [ "$CONFIRM" != "y" ] && return
-
-    mkdir -p "$SV_DIR"
-
-    # Скачиваем ядро
-    echo -e "${CYAN}Скачиваю ядро...${NC}"
-    if ! wget -O "$SV_DIR/server.jar" "$POSEIDON_URL"; then
-        echo -e "${RED}Ошибка загрузки!${NC}"
-        rm -f "$SV_DIR/server.jar"
-        pause
+    echo "[1/3] Скачиваю ядро..."
+    if ! wget -O "$sv_dir/server.jar" "$POSEIDON_URL"; then
+        rm -f "$sv_dir/server.jar"
+        echo "ОШИБКА загрузки!"
+        read -r
         return
     fi
 
-    # start.sh
-    cat > "$SV_DIR/start.sh" << EOF
-#!/data/data/com.termux/files/usr/bin/bash
-cd "$SV_DIR"
-echo "[$SV_NAME] Запуск (RAM: 1G, Port: $SV_PORT)..."
-"$JAVA8_PATH" -Xmx1G -Xms1G -jar server.jar nogui
-EOF
-    chmod +x "$SV_DIR/start.sh"
+    echo "[2/3] Настраиваю..."
+    make_start_sh "$sv_dir" "$name" "1G" "$port"
+    write_server_conf "$sv_dir" "$name" "1G" "$port" "poseidon"
 
-    write_server_conf "$SV_DIR" "$SV_NAME" "1G" "$SV_PORT" "poseidon"
-
-    # Первый запуск
-    echo -e "${YELLOW}Первый запуск для генерации конфигов (Ctrl+C для остановки)...${NC}"
-    cd "$SV_DIR" && ./start.sh || true
-
-    # Патч
-    if [ -f "$SV_DIR/eula.txt" ]; then
-        sed -i 's/eula=false/eula=true/g' "$SV_DIR/eula.txt"
-    fi
-    if [ -f "$SV_DIR/server.properties" ]; then
-        sed -i "s/online-mode=true/online-mode=false/g" "$SV_DIR/server.properties"
-        sed -i "s/verify-names=true/verify-names=false/g" "$SV_DIR/server.properties"
-        sed -i "s/server-ip=.*/server-ip=/g" "$SV_DIR/server.properties"
-        sed -i "s/server-port=.*/server-port=$SV_PORT/g" "$SV_DIR/server.properties"
-    fi
-
+    echo "[3/3] Первый запуск (Ctrl+C для остановки)..."
     echo ""
-    echo -e "${GREEN}${BOLD}Сервер '$SV_NAME' готов!${NC}"
-    echo -e "  Папка: $SV_DIR"
-    echo -e "  Порт:  $SV_PORT"
-    echo -e "  Запуск через меню: Мои серверы → $SV_NAME → Запустить"
-    pause
+    cd "$sv_dir" && ./start.sh || true
+    patch_server "$sv_dir" "$port"
+    echo ""
+    echo "Готово! Нажми Enter..."
+    read -r
+
+    dialog --title "$TITLE" --msgbox "Сервер '$name' готов!\n\nПорт: $port\nУправляй через «Мои серверы»" 9 44
 }
 
 # =====================
-# Список серверов
+# 4. Мои серверы
 # =====================
 
 list_servers_menu() {
     while true; do
-        show_logo
-        echo -e "${BOLD}[Мои серверы]${NC}"
-        echo ""
-
         local servers
         read -ra servers <<< "$(get_servers)"
 
         if [ ${#servers[@]} -eq 0 ] || [ -z "${servers[0]}" ]; then
-            echo -e "${DIM}  Серверов пока нет. Создай первый!${NC}"
-            echo ""
-            pause
+            dialog --title "$TITLE" --msgbox "Серверов пока нет.\nСоздай первый!" 7 34
             return
         fi
 
-        # Заголовок таблицы
-        printf "  ${BOLD}%-4s %-20s %-8s %-6s %-12s${NC}\n" "#" "Имя" "Порт" "RAM" "Статус"
-        echo "  --------------------------------------------------------"
-
-        local i=1
+        # Собираем пункты меню
+        local items=()
         for srv in "${servers[@]}"; do
             local sv_dir="$BASE_DIR/$srv"
             read_server_conf "$sv_dir"
-
             local actual_port
             actual_port=$(get_actual_port "$sv_dir")
-
-            local status_text
-            if is_server_running "$srv"; then
-                status_text="${GREEN}РАБОТАЕТ${NC}"
-            else
-                status_text="${DIM}остановлен${NC}"
-            fi
-
-            printf "  %-4s %-20s %-8s %-6s " "$i" "$NAME" "$actual_port" "$RAM"
-            echo -e "$status_text"
-            i=$((i + 1))
+            local status="СТОП"
+            is_server_running "$srv" && status="ЗАПУЩЕН"
+            items+=("$srv" "Порт:$actual_port RAM:$RAM [$status]")
         done
 
-        echo ""
-        echo -e "${DIM}  Введи номер сервера для управления${NC}"
-        echo ""
-        read -p "  Выбор (номер / b=назад): " CHOICE
+        local choice
+        choice=$(dialog --title "Мои серверы" --menu "Выбери сервер:" 18 56 10 "${items[@]}" 3>&1 1>&2 2>&3)
+        [ $? -ne 0 ] && return
 
-        [ "$CHOICE" == "b" ] || [ "$CHOICE" == "B" ] && return
-
-        if echo "$CHOICE" | grep -qE '^[0-9]+$'; then
-            local idx=$((CHOICE - 1))
-            if [ $idx -ge 0 ] && [ $idx -lt ${#servers[@]} ]; then
-                server_manage_menu "${servers[$idx]}"
-            fi
-        fi
+        server_manage_menu "$choice"
     done
 }
 
@@ -484,216 +379,155 @@ list_servers_menu() {
 # =====================
 
 server_manage_menu() {
-    local srv_name="$1"
-    local sv_dir="$BASE_DIR/$srv_name"
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
 
     while true; do
-        show_logo
         read_server_conf "$sv_dir"
-
         local actual_port
         actual_port=$(get_actual_port "$sv_dir")
+        local status="ОСТАНОВЛЕН"
+        is_server_running "$name" && status="РАБОТАЕТ"
 
-        local status_text
-        if is_server_running "$srv_name"; then
-            status_text="${GREEN}РАБОТАЕТ${NC}"
-        else
-            status_text="${RED}ОСТАНОВЛЕН${NC}"
-        fi
+        local choice
+        choice=$(dialog --title "[$status] $name" \
+            --menu "RAM: $RAM | Порт: $actual_port | Ядро: $CORE" 18 54 9 \
+            "start"    "Запустить" \
+            "stop"     "Остановить" \
+            "restart"  "Перезапустить" \
+            "console"  "Консоль (screen)" \
+            "settings" "Настройки (RAM, порт)" \
+            "service"  "Создать сервис (автосохр.)" \
+            "---"      "─────────────────────" \
+            "delete"   "Удалить сервер" \
+            3>&1 1>&2 2>&3)
+        [ $? -ne 0 ] && return
 
-        echo -e "${BOLD}Сервер: ${CYAN}$NAME${NC}  [$status_text${NC}]"
-        echo -e "${DIM}  Папка: $sv_dir${NC}"
-        echo -e "${DIM}  RAM: $RAM | Порт: $actual_port | Ядро: $CORE${NC}"
-        echo ""
-
-        echo "  1. Запустить"
-        echo "  2. Остановить"
-        echo "  3. Консоль (screen)"
-        echo "  4. Перезапустить"
-        echo ""
-        echo "  5. Настройки (RAM, порт, online-mode)"
-        echo "  6. Создать сервис (автозапуск + автосохранение)"
-        echo ""
-        echo -e "  ${RED}9. Удалить сервер${NC}"
-        echo ""
-        read -p "  Выбор (b=назад): " ACT
-
-        case $ACT in
-            1) server_start "$srv_name" ;;
-            2) server_stop "$srv_name" ;;
-            3) server_console "$srv_name" ;;
-            4) server_stop "$srv_name"; sleep 1; server_start "$srv_name" ;;
-            5) server_settings "$srv_name" ;;
-            6) server_create_service "$srv_name" ;;
-            9) server_delete "$srv_name" && return ;;
-            b|B) return ;;
+        case $choice in
+            start)    server_start "$name" ;;
+            stop)     server_stop "$name" ;;
+            restart)  server_stop_silent "$name"; server_start "$name" ;;
+            console)  server_console "$name" ;;
+            settings) server_settings "$name" ;;
+            service)  server_create_service "$name" ;;
+            delete)   server_delete "$name" && return ;;
         esac
     done
 }
 
-# Запуск сервера
 server_start() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
 
     if is_server_running "$name"; then
-        echo -e "${YELLOW}Сервер уже запущен!${NC}"
-        pause
+        dialog --title "$name" --msgbox "Уже запущен!" 6 30
         return
     fi
-
     if [ ! -f "$sv_dir/server.jar" ]; then
-        echo -e "${RED}server.jar не найден! Закинь его в $sv_dir/${NC}"
-        pause
+        dialog --title "$name" --msgbox "server.jar не найден!\nЗакинь в: $sv_dir/" 7 50
         return
     fi
 
-    if [ ! -f "$sv_dir/start.sh" ]; then
-        echo -e "${RED}start.sh не найден!${NC}"
-        pause
-        return
-    fi
-
-    echo -e "${CYAN}Запускаю '$name'...${NC}"
     cd "$sv_dir"
     screen -dmS "mbsft-${name}" ./start.sh
-    sleep 1
+    sleep 2
 
     if is_server_running "$name"; then
-        local actual_port
-        actual_port=$(get_actual_port "$sv_dir")
-        local ip
+        local ip port
         ip=$(get_ip)
-        echo -e "${GREEN}Сервер '$name' запущен!${NC}"
-        echo -e "  Подключение: ${BOLD}${ip}:${actual_port}${NC}"
-        echo -e "  Консоль:     ${CYAN}screen -r mbsft-${name}${NC}"
+        port=$(get_actual_port "$sv_dir")
+        dialog --title "$name" --msgbox "Сервер запущен!\n\nПодключение: $ip:$port\nКонсоль: screen -r mbsft-${name}" 9 50
     else
-        echo -e "${RED}Не удалось запустить. Проверь логи.${NC}"
+        dialog --title "$name" --msgbox "Не удалось запустить.\nПроверь логи в $sv_dir/" 7 50
     fi
-    pause
 }
 
-# Остановка сервера
 server_stop() {
     local name="$1"
-
     if ! is_server_running "$name"; then
-        echo -e "${DIM}Сервер '$name' не запущен.${NC}"
-        pause
+        dialog --title "$name" --msgbox "Сервер не запущен." 6 34
         return
     fi
 
-    echo -e "${YELLOW}Останавливаю '$name'...${NC}"
-    # Отправляем stop в screen сессию
     screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
-
-    # Ждём завершения (макс 15 секунд)
     local tries=0
     while is_server_running "$name" && [ $tries -lt 15 ]; do
         sleep 1
         tries=$((tries + 1))
     done
+    is_server_running "$name" && screen -S "mbsft-${name}" -X quit 2>/dev/null
 
-    # Если всё ещё работает — убиваем screen
-    if is_server_running "$name"; then
-        screen -S "mbsft-${name}" -X quit 2>/dev/null
-    fi
-
-    echo -e "${GREEN}Сервер '$name' остановлен.${NC}"
-    pause
+    dialog --title "$name" --msgbox "Сервер остановлен." 6 34
 }
 
-# Консоль
+server_stop_silent() {
+    local name="$1"
+    is_server_running "$name" || return
+    screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
+    local tries=0
+    while is_server_running "$name" && [ $tries -lt 15 ]; do
+        sleep 1
+        tries=$((tries + 1))
+    done
+    is_server_running "$name" && screen -S "mbsft-${name}" -X quit 2>/dev/null
+}
+
 server_console() {
     local name="$1"
-
     if ! is_server_running "$name"; then
-        echo -e "${RED}Сервер не запущен!${NC}"
-        pause
+        dialog --title "$name" --msgbox "Сервер не запущен!" 6 34
         return
     fi
-
-    echo -e "${CYAN}Подключаюсь к консоли '$name'...${NC}"
-    echo -e "${DIM}Выход: Ctrl+A, затем D${NC}"
-    sleep 1
+    dialog --title "$name" --msgbox "Откроется консоль сервера.\n\nВыход: Ctrl+A, затем D" 8 40
     screen -r "mbsft-${name}"
 }
 
-# Настройки
 server_settings() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
-
-    show_logo
     read_server_conf "$sv_dir"
-    echo -e "${BOLD}[Настройки: $NAME]${NC}"
-    echo ""
 
-    # Текущие значения
     local actual_port
     actual_port=$(get_actual_port "$sv_dir")
-
     local online="?"
-    if [ -f "$sv_dir/server.properties" ]; then
-        online=$(grep "online-mode=" "$sv_dir/server.properties" 2>/dev/null | cut -d= -f2)
-    fi
-
-    echo "  Текущие:"
-    echo "    RAM:         $RAM"
-    echo "    Порт:        $actual_port"
-    echo "    online-mode: $online"
-    echo ""
+    [ -f "$sv_dir/server.properties" ] && online=$(grep "online-mode=" "$sv_dir/server.properties" 2>/dev/null | cut -d= -f2)
 
     # RAM
-    read -p "  Новый RAM [$RAM]: " NEW_RAM
-    NEW_RAM=${NEW_RAM:-$RAM}
-    if ! echo "$NEW_RAM" | grep -qE '^[0-9]+[MG]$'; then
-        echo -e "${RED}Неверный формат RAM!${NC}"
-        pause
-        return
-    fi
+    local new_ram
+    new_ram=$(dialog --title "Настройки: $name" --menu "RAM (сейчас: $RAM):" 12 44 4 \
+        "512M" "Для слабых устройств" \
+        "1G"   "Рекомендуется" \
+        "2G"   "Для мощных устройств" \
+        "4G"   "Максимум" \
+        3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
 
     # Порт
-    read -p "  Новый порт [$actual_port]: " NEW_PORT
-    NEW_PORT=${NEW_PORT:-$actual_port}
+    local new_port
+    new_port=$(dialog --title "Настройки: $name" --inputbox "Порт (сейчас: $actual_port):" 8 40 "$actual_port" 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && return
 
     # Online-mode
-    read -p "  online-mode (true/false) [false]: " NEW_ONLINE
-    NEW_ONLINE=${NEW_ONLINE:-false}
+    local new_online=false
+    dialog --title "Настройки: $name" --yesno "Включить online-mode?\n(Сейчас: $online)\n\nДа = лицензия нужна\nНет = пираты могут заходить" 10 44
+    [ $? -eq 0 ] && new_online=true
 
     # Применяем
-    # start.sh
-    cat > "$sv_dir/start.sh" << EOF
-#!/data/data/com.termux/files/usr/bin/bash
-cd "$sv_dir"
-echo "[$name] Запуск (RAM: $NEW_RAM, Port: $NEW_PORT)..."
-"$JAVA8_PATH" -Xmx$NEW_RAM -Xms$NEW_RAM -jar server.jar nogui
-EOF
-    chmod +x "$sv_dir/start.sh"
+    make_start_sh "$sv_dir" "$name" "$new_ram" "$new_port"
 
-    # server.properties
     if [ -f "$sv_dir/server.properties" ]; then
-        sed -i "s/server-port=.*/server-port=$NEW_PORT/g" "$sv_dir/server.properties"
-        sed -i "s/online-mode=.*/online-mode=$NEW_ONLINE/g" "$sv_dir/server.properties"
-        sed -i "s/verify-names=.*/verify-names=$NEW_ONLINE/g" "$sv_dir/server.properties"
+        sed -i "s/server-port=.*/server-port=$new_port/g" "$sv_dir/server.properties"
+        sed -i "s/online-mode=.*/online-mode=$new_online/g" "$sv_dir/server.properties"
+        sed -i "s/verify-names=.*/verify-names=$new_online/g" "$sv_dir/server.properties"
         sed -i "s/server-ip=.*/server-ip=/g" "$sv_dir/server.properties"
     fi
+    [ -f "$sv_dir/eula.txt" ] && sed -i 's/eula=false/eula=true/g' "$sv_dir/eula.txt"
 
-    # EULA
-    if [ -f "$sv_dir/eula.txt" ]; then
-        sed -i 's/eula=false/eula=true/g' "$sv_dir/eula.txt"
-    fi
+    write_server_conf "$sv_dir" "$name" "$new_ram" "$new_port" "$CORE"
 
-    # Обновляем конфиг
-    write_server_conf "$sv_dir" "$name" "$NEW_RAM" "$NEW_PORT" "$CORE"
-
-    echo ""
-    echo -e "${GREEN}Настройки обновлены!${NC}"
-    echo -e "${YELLOW}Перезапусти сервер чтобы изменения вступили в силу.${NC}"
-    pause
+    dialog --title "$name" --msgbox "Настройки обновлены!\n\nRAM: $new_ram\nПорт: $new_port\nonline-mode: $new_online\n\nПерезапусти сервер." 11 40
 }
 
-# Создание сервиса
 server_create_service() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
@@ -705,8 +539,6 @@ server_create_service() {
     cat > "$SVDIR/run" << SEOF
 #!/data/data/com.termux/files/usr/bin/sh
 cd "$sv_dir"
-
-# Автосохранение каждые 10 минут
 (
     while true; do
         sleep 600
@@ -714,9 +546,7 @@ cd "$sv_dir"
     done
 ) &
 SAVE_PID=\$!
-
 trap "kill \$SAVE_PID 2>/dev/null" EXIT TERM INT
-
 exec screen -DmS "mbsft-${name}" ./start.sh
 SEOF
     chmod +x "$SVDIR/run"
@@ -727,212 +557,161 @@ mkdir -p "$sv_dir/logs/sv"
 exec svlogd -tt "$sv_dir/logs/sv"
 LEOF
     chmod +x "$SVDIR/log/run"
+    command -v sv-enable &>/dev/null && sv-enable "$sv_service" 2>/dev/null || true
 
-    if command -v sv-enable &>/dev/null; then
-        sv-enable "$sv_service" 2>/dev/null || true
-    fi
-
-    echo ""
-    echo -e "${GREEN}Сервис '$sv_service' создан!${NC}"
-    echo ""
-    echo "  Автозапуск при старте Termux"
-    echo "  Автосохранение каждые 10 минут"
-    echo ""
-    echo "  Управление:"
-    echo -e "    ${CYAN}sv up $sv_service${NC}     — запуск"
-    echo -e "    ${CYAN}sv down $sv_service${NC}   — стоп"
-    pause
+    dialog --title "$name" --msgbox "Сервис '$sv_service' создан!\n\nАвтозапуск при старте Termux\nАвтосохранение каждые 10 мин\n\nУправление:\n  sv up $sv_service\n  sv down $sv_service" 13 48
 }
 
-# Удаление сервера
 server_delete() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
 
-    echo ""
-    echo -e "${RED}${BOLD}ВНИМАНИЕ: Это удалит сервер '$name' и ВСЕ его файлы!${NC}"
-    echo -e "${RED}  Папка: $sv_dir${NC}"
-    echo ""
-    read -p "Введи имя сервера для подтверждения: " CONFIRM
+    dialog --title "УДАЛЕНИЕ" --yesno "Удалить сервер '$name' и ВСЕ его файлы?\n\n$sv_dir" 8 50
+    [ $? -ne 0 ] && return 1
 
-    if [ "$CONFIRM" != "$name" ]; then
-        echo -e "${YELLOW}Отменено.${NC}"
-        pause
+    local confirm
+    confirm=$(dialog --title "ПОДТВЕРЖДЕНИЕ" --inputbox "Введи имя сервера для подтверждения:" 8 50 "" 3>&1 1>&2 2>&3)
+    if [ "$confirm" != "$name" ]; then
+        dialog --title "$TITLE" --msgbox "Отменено." 6 24
         return 1
     fi
 
-    # Останавливаем если запущен
-    if is_server_running "$name"; then
+    is_server_running "$name" && {
         screen -S "mbsft-${name}" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null
         sleep 3
         screen -S "mbsft-${name}" -X quit 2>/dev/null
-    fi
+    }
 
-    # Удаляем сервис если есть
     local sv_service="mbsft-${name}"
     if [ -d "$PREFIX/var/service/$sv_service" ]; then
         sv down "$sv_service" 2>/dev/null || true
-        if command -v sv-disable &>/dev/null; then
-            sv-disable "$sv_service" 2>/dev/null || true
-        fi
+        command -v sv-disable &>/dev/null && sv-disable "$sv_service" 2>/dev/null || true
         rm -rf "$PREFIX/var/service/$sv_service"
     fi
 
-    # Удаляем папку
     rm -rf "$sv_dir"
-
-    echo -e "${GREEN}Сервер '$name' удалён.${NC}"
-    pause
+    dialog --title "$TITLE" --msgbox "Сервер '$name' удалён." 6 38
     return 0
 }
 
 # =====================
-# Дашборд
+# 5. Дашборд
 # =====================
 
 dashboard() {
-    show_logo
-    echo -e "${BOLD}[Дашборд]${NC}"
-    echo ""
-
     local ip
     ip=$(get_ip)
 
-    # Зависимости
-    if deps_installed; then
-        echo -e "  Java 8:  ${GREEN}OK${NC}"
-    else
-        echo -e "  Java 8:  ${RED}не установлена${NC}"
-    fi
+    local java_status="НЕ УСТАНОВЛЕНА"
+    deps_installed && java_status="OK"
 
-    echo -e "  IP:      ${CYAN}$ip${NC}"
+    local ssh_status="выкл"
+    pidof sshd &>/dev/null && ssh_status="порт 8022"
 
-    if pidof sshd &>/dev/null; then
-        echo -e "  SSH:     ${GREEN}порт 8022${NC}"
-    else
-        echo -e "  SSH:     ${DIM}выкл${NC}"
-    fi
-
-    echo ""
+    local info="Java 8:  $java_status\nIP:      $ip\nSSH:     $ssh_status\n\n"
 
     local servers
     read -ra servers <<< "$(get_servers)"
 
     if [ ${#servers[@]} -eq 0 ] || [ -z "${servers[0]}" ]; then
-        echo -e "  ${DIM}Серверов нет.${NC}"
-        echo ""
-        pause
-        return
+        info+="Серверов нет."
+    else
+        info+="$(printf '%-16s %-7s %-5s %-10s %s\n' 'Имя' 'Порт' 'RAM' 'Статус' 'Подключение')"
+        info+="\n$(printf '%0.s─' {1..56})\n"
+        for srv in "${servers[@]}"; do
+            local sv_dir="$BASE_DIR/$srv"
+            read_server_conf "$sv_dir"
+            local actual_port
+            actual_port=$(get_actual_port "$sv_dir")
+            local status="стоп" connect="-"
+            if is_server_running "$srv"; then
+                status="РАБОТАЕТ"
+                connect="$ip:$actual_port"
+            fi
+            info+="$(printf '%-16s %-7s %-5s %-10s %s' "$NAME" "$actual_port" "$RAM" "$status" "$connect")\n"
+        done
     fi
 
-    printf "  ${BOLD}%-20s %-8s %-6s %-12s %-20s${NC}\n" "Имя" "Порт" "RAM" "Статус" "Подключение"
-    echo "  --------------------------------------------------------------------------"
-
-    for srv in "${servers[@]}"; do
-        local sv_dir="$BASE_DIR/$srv"
-        read_server_conf "$sv_dir"
-
-        local actual_port
-        actual_port=$(get_actual_port "$sv_dir")
-
-        local status_text connect_text
-        if is_server_running "$srv"; then
-            status_text="${GREEN}РАБОТАЕТ${NC}"
-            connect_text="${ip}:${actual_port}"
-        else
-            status_text="${DIM}остановлен${NC}"
-            connect_text="${DIM}-${NC}"
-        fi
-
-        printf "  %-20s %-8s %-6s " "$NAME" "$actual_port" "$RAM"
-        printf "%-12b %-20b\n" "$status_text" "$connect_text"
-    done
-
-    echo ""
-    pause
+    dialog --title "Дашборд" --msgbox "$info" 20 60
 }
 
 # =====================
-# SSH
+# 6. SSH
 # =====================
 
 step_ssh() {
-    show_logo
-    echo -e "${CYAN}${BOLD}[Настройка SSH]${NC}"
+    dialog --title "SSH" --yesno "Настроить SSH доступ?\n\nПосле этого сможешь управлять\nсервером с ПК через терминал." 9 44
+    [ $? -ne 0 ] && return
+
+    clear
+    echo "=== Настройка SSH ==="
     echo ""
-
-    echo -e "${YELLOW}Придумай пароль для входа с ПК:${NC}"
+    echo "Придумай пароль:"
     passwd
-
     sshd
+    echo ""
 
     local user ip
     user=$(whoami)
     ip=$(get_ip)
+    echo "Готово! Нажми Enter..."
+    read -r
 
-    echo ""
-    echo -e "${GREEN}SSH запущен на порту 8022!${NC}"
-    echo "================================================"
-    echo -e "  ${CYAN}ssh -p 8022 $user@$ip${NC}"
-    echo "================================================"
-    pause
+    dialog --title "SSH" --msgbox "SSH запущен!\n\nКоманда для подключения с ПК:\n\nssh -p 8022 $user@$ip" 10 48
 }
 
 # =====================
 # Главное меню
 # =====================
 
-main_menu() {
-    show_logo
+main_loop() {
+    while true; do
+        local servers
+        read -ra servers <<< "$(get_servers)"
+        local count=0
+        [ -n "${servers[0]:-}" ] && count=${#servers[@]}
 
-    local servers
-    read -ra servers <<< "$(get_servers)"
-    local count=0
-    [ -n "${servers[0]}" ] && count=${#servers[@]}
+        local running=0
+        for srv in "${servers[@]}"; do
+            [ -z "$srv" ] && continue
+            is_server_running "$srv" && running=$((running + 1))
+        done
 
-    local running=0
-    for srv in "${servers[@]}"; do
-        [ -z "$srv" ] && continue
-        is_server_running "$srv" && running=$((running + 1))
+        local status_line="Серверов: $count | Запущено: $running"
+        deps_installed && status_line="Java: OK | $status_line"
+
+        local choice
+        choice=$(dialog --title "$TITLE" \
+            --menu "$status_line" 17 52 8 \
+            "deps"     "Установить зависимости" \
+            "create"   "Создать сервер (пошагово)" \
+            "quick"    "Быстрое создание" \
+            "servers"  "Мои серверы [$count шт.]" \
+            "dash"     "Дашборд" \
+            "ssh"      "Настроить SSH" \
+            "---"      "─────────────────────" \
+            "quit"     "Выход" \
+            3>&1 1>&2 2>&3)
+
+        case $? in
+            1|255) break ;;
+        esac
+
+        case $choice in
+            deps)    step_deps ;;
+            create)  create_server ;;
+            quick)   quick_create ;;
+            servers) list_servers_menu ;;
+            dash)    dashboard ;;
+            ssh)     step_ssh ;;
+            quit)    break ;;
+        esac
     done
 
-    if deps_installed; then
-        echo -e "  Java: ${GREEN}OK${NC} | Серверов: ${BOLD}$count${NC} | Запущено: ${GREEN}$running${NC}"
-    else
-        echo -e "  ${YELLOW}Зависимости не установлены${NC}"
-    fi
-    echo ""
-
-    echo "  1. Установить зависимости"
-    echo "  2. Создать сервер (пошагово)"
-    echo -e "  3. Быстрое создание ${DIM}(Poseidon + авто-настройка)${NC}"
-    echo ""
-    echo -e "  ${BOLD}4. Мои серверы${NC} ${DIM}[$count шт.]${NC}"
-    echo -e "  5. Дашборд ${DIM}(статус всех серверов)${NC}"
-    echo ""
-    echo "  6. Настроить SSH"
-    echo ""
-    echo "  [q] Выход"
+    clear
 }
 
 # =====================
 # Main
 # =====================
-
-check_termux
-mkdir -p "$BASE_DIR"
-
-while true; do
-    main_menu
-    echo ""
-    read -p "  Выбор: " OPT
-    case $OPT in
-        1) step_deps ;;
-        2) create_server ;;
-        3) quick_create ;;
-        4) list_servers_menu ;;
-        5) dashboard ;;
-        6) step_ssh ;;
-        q|Q) echo -e "${GREEN}Пока!${NC}"; exit 0 ;;
-    esac
-done
+main_loop
