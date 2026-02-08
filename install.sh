@@ -161,6 +161,7 @@ TITLE="MBSFT v${VERSION}"
 
 # Локальный IP (для подключения по Wi-Fi)
 get_local_ip() {
+    [ -n "$CACHED_LOCAL_IP" ] && echo "$CACHED_LOCAL_IP" && return
     local ip=""
     # 1. ip route — самый надёжный способ в Linux/Termux
     if [ -z "$ip" ] && command -v ip &>/dev/null; then
@@ -179,11 +180,13 @@ get_local_ip() {
     if [ -z "$ip" ] && command -v hostname &>/dev/null; then
         ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
-    echo "${ip:-не определён}"
+    CACHED_LOCAL_IP="${ip:-не определён}"
+    echo "$CACHED_LOCAL_IP"
 }
 
 # Внешний IP (через интернет)
 get_external_ip() {
+    [ -n "$CACHED_EXT_IP" ] && echo "$CACHED_EXT_IP" && return
     local ip=""
     if command -v curl &>/dev/null; then
         ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
@@ -192,8 +195,10 @@ get_external_ip() {
     fi
     # Проверяем что результат похож на IP
     if echo "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        CACHED_EXT_IP="$ip"
         echo "$ip"
     else
+        CACHED_EXT_IP="не определён"
         echo "не определён"
     fi
 }
@@ -1017,8 +1022,9 @@ server_delete() {
 # =====================
 
 dashboard() {
-    local local_ip="${CACHED_LOCAL_IP:-$(get_local_ip)}"
-    local ext_ip="${CACHED_EXT_IP:-$(get_external_ip)}"
+    local local_ip ext_ip
+    local_ip=$(get_local_ip)
+    ext_ip=$(get_external_ip)
 
     local java_status="НЕ УСТАНОВЛЕНА"
     if find_java; then
@@ -1075,8 +1081,8 @@ step_ssh() {
 
     local user local_ip ext_ip
     user=$(whoami)
-    local_ip="${CACHED_LOCAL_IP:-$(get_local_ip)}"
-    ext_ip="${CACHED_EXT_IP:-$(get_external_ip)}"
+    local_ip=$(get_local_ip)
+    ext_ip=$(get_external_ip)
     echo "Готово! Нажми Enter..."
     read -r
 
@@ -1136,11 +1142,4 @@ main_loop() {
 # =====================
 # Main
 # =====================
-# Оптимизация: Предварительный поиск IP (кэш), чтобы не тормозить в меню
-echo "Проверка сети..."
-CACHED_LOCAL_IP=$(get_local_ip)
-# Внешний IP может быть долгим, запустим его в фоне и закэшируем (или синхронно с таймаутом)
-# Лучше синхронно, чтобы пользователь видел статус, но с коротким таймаутом
-CACHED_EXT_IP=$(get_external_ip)
-
 main_loop
