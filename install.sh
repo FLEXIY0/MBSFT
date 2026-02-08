@@ -1348,25 +1348,32 @@ uninstall_all() {
 # =====================
 
 kill_zombie_loops() {
-    # Находим PID всех процессов sleep 600
+    # 1. Убиваем зависшие менеджеры сервисов (runsv), если они касаются mbsft
+    # Это корень зла, который перезапускает скрипты
+    pkill -f "runsv mbsft" 2>/dev/null
+
+    # 2. Находим PID всех процессов sleep 600
     local sleeps
     sleeps=$(pgrep -f "sleep 600")
     
     if [ -n "$sleeps" ]; then
+        echo "=== ОЧИСТКА ЗОМБИ (sleep 600) ==="
         for pid in $sleeps; do
-            # Находим Parent PID (родителя, который крутит цикл)
+            # Находим Parent PID
             local ppid
-            # ps -o ppid= выводит только число. tr -d ' ' убирает пробелы
             ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+            local parent_name=""
+            [ -n "$ppid" ] && parent_name=$(ps -o args= -p "$ppid" 2>/dev/null)
+            
+            echo "Убиваю sleep $pid (Родитель: PID $ppid -> $parent_name)"
             
             if [ -n "$ppid" ] && [ "$ppid" -gt 1 ]; then
-                 # Проверяем, что это не init и не сам скрипт (на всякий случай)
-                 # Убиваем родителя - это остановит цикл
                  kill -9 "$ppid" 2>/dev/null
             fi
-            # Убиваем сам sleep
             kill -9 "$pid" 2>/dev/null
         done
+        echo "=== ОЧИСТКА ЗАВЕРШЕНА ==="
+        echo ""
     fi
 }
 
