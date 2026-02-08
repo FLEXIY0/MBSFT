@@ -5,22 +5,60 @@
 # Мульти-сервер менеджер (dialog UI)
 # ============================================
 
-# Перенаправляем stdin с терминала (нужно для curl | bash)
-exec < /dev/tty
+# =====================
+# Fix: curl | bash
+# Если stdin — не терминал (пайп), сохраняем скрипт
+# во временный файл и перезапускаем из файла
+# =====================
+if [ ! -t 0 ]; then
+    TMPSCRIPT=$(mktemp "$HOME/.mbsft_install_XXXXXX.sh")
+    cat > "$TMPSCRIPT"
+    exec bash "$TMPSCRIPT" "$@"
+    exit
+fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-JAVA8_PATH="/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
 POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
-VERSION="2.1"
+OPENJDK8_ALT_URL="https://raw.githubusercontent.com/nicola02nb/termux-openjdk-8/main/install.sh"
+VERSION="2.2"
+
+# Java: будет найдена динамически
+JAVA_BIN=""
+
+# =====================
+# Поиск Java
+# =====================
+find_java() {
+    # Приоритет: java-8 > java-17 > любая java в PATH
+    local paths=(
+        "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
+        "/data/data/com.termux/files/usr/lib/jvm/java-8/bin/java"
+        "$HOME/.jdk8/bin/java"
+        "/data/data/com.termux/files/usr/lib/jvm/java-17-openjdk/bin/java"
+        "/data/data/com.termux/files/usr/lib/jvm/java-17/bin/java"
+    )
+    for p in "${paths[@]}"; do
+        if [ -x "$p" ]; then
+            JAVA_BIN="$p"
+            return 0
+        fi
+    done
+    # Последний шанс — java в PATH
+    if command -v java &>/dev/null; then
+        JAVA_BIN="$(command -v java)"
+        return 0
+    fi
+    return 1
+}
 
 # =====================
 # Bootstrap: dialog
 # =====================
 if ! command -v dialog &>/dev/null; then
-    echo "Устанавливаю dialog..."
+    echo "[MBSFT] Устанавливаю dialog..."
     pkg install -y dialog 2>/dev/null || {
-        apt update -y && apt install -y dialog
+        apt update -y 2>/dev/null && apt install -y dialog 2>/dev/null
     }
 fi
 
@@ -36,6 +74,7 @@ if [ ! -d "/data/data/com.termux" ]; then
 fi
 
 mkdir -p "$BASE_DIR"
+find_java
 
 # =====================
 # Утилиты
@@ -45,17 +84,26 @@ TITLE="MBSFT v${VERSION}"
 
 get_ip() {
     local ip=""
-    if command -v ifconfig &>/dev/null; then
-        ip=$(ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}')
-    fi
-    if [ -z "$ip" ] && command -v ip &>/dev/null; then
+    # 1. iproute2 (ip addr)
+    if command -v ip &>/dev/null; then
         ip=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+        [ -z "$ip" ] && ip=$(ip addr show eth0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+        [ -z "$ip" ] && ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+')
+    fi
+    # 2. net-tools (ifconfig)
+    if [ -z "$ip" ] && command -v ifconfig &>/dev/null; then
+        ip=$(ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}')
+        [ -z "$ip" ] && ip=$(ifconfig eth0 2>/dev/null | grep 'inet ' | awk '{print $2}')
+    fi
+    # 3. termux-wifi-connectioninfo
+    if [ -z "$ip" ] && command -v termux-wifi-connectioninfo &>/dev/null; then
+        ip=$(termux-wifi-connectioninfo 2>/dev/null | grep '"ip"' | cut -d'"' -f4)
     fi
     echo "${ip:-не определён}"
 }
 
 deps_installed() {
-    [ -f "$JAVA8_PATH" ] && command -v screen &>/dev/null && command -v wget &>/dev/null
+    find_java && command -v screen &>/dev/null && command -v wget &>/dev/null
 }
 
 validate_name() {
@@ -135,14 +183,15 @@ patch_server() {
     fi
 }
 
-# Генерация start.sh
+# Генерация start.sh (использует найденную java)
 make_start_sh() {
     local sv_dir="$1" name="$2" ram="$3" port="$4"
+    find_java
     cat > "$sv_dir/start.sh" << EOF
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$sv_dir"
 echo "[$name] Запуск (RAM: $ram, Port: $port)..."
-"$JAVA8_PATH" -Xmx$ram -Xms$ram -jar server.jar nogui
+"$JAVA_BIN" -Xmx$ram -Xms$ram -jar server.jar nogui
 EOF
     chmod +x "$sv_dir/start.sh"
 }
@@ -151,33 +200,77 @@ EOF
 # 1. Зависимости
 # =====================
 
+install_java() {
+    echo ""
+    echo "=== Установка Java ==="
+    echo ""
+
+    # Способ 1: openjdk-8 из tur-repo
+    echo "[1/3] Пробую openjdk-8 (tur-repo)..."
+    pkg install -y openjdk-8 2>/dev/null
+    if find_java; then
+        echo "OK: Java найдена — $JAVA_BIN"
+        return 0
+    fi
+
+    # Способ 2: альтернативный скрипт openjdk-8
+    echo "[2/3] Пробую альтернативный openjdk-8..."
+    if command -v wget &>/dev/null; then
+        wget -qO- "$OPENJDK8_ALT_URL" | bash 2>/dev/null
+    elif command -v curl &>/dev/null; then
+        curl -sL "$OPENJDK8_ALT_URL" | bash 2>/dev/null
+    fi
+    if find_java; then
+        echo "OK: Java найдена — $JAVA_BIN"
+        return 0
+    fi
+
+    # Способ 3: openjdk-17
+    echo "[3/3] Пробую openjdk-17..."
+    pkg install -y openjdk-17 2>/dev/null
+    if find_java; then
+        echo "OK: Java 17 найдена — $JAVA_BIN"
+        echo "(Java 17 совместима с большинством серверов)"
+        return 0
+    fi
+
+    echo ""
+    echo "ОШИБКА: Не удалось установить Java ни одним способом!"
+    echo "Попробуй вручную: pkg install openjdk-17"
+    return 1
+}
+
 step_deps() {
     if deps_installed; then
         local jver
-        jver=$("$JAVA8_PATH" -version 2>&1 | head -1)
-        dialog --title "$TITLE" --msgbox "Всё уже установлено!\n\nJava 8: $jver\nscreen: $(which screen)\nwget: $(which wget)" 10 50
+        jver=$("$JAVA_BIN" -version 2>&1 | head -1)
+        dialog --title "$TITLE" --msgbox "Всё уже установлено!\n\nJava: $jver\nПуть: $JAVA_BIN\nscreen: $(which screen)\nwget: $(which wget)" 12 56
         return
     fi
 
-    dialog --title "$TITLE" --yesno "Установить зависимости?\n\n• Java 8 (OpenJDK)\n• screen\n• wget\n• openssh\n• net-tools\n• termux-services" 14 44
+    dialog --title "$TITLE" --yesno "Установить зависимости?\n\n• Java (OpenJDK 8 / 17)\n• screen, wget\n• openssh, iproute2, net-tools\n• termux-services" 12 46
     [ $? -ne 0 ] && return
 
     clear
     echo "=== Установка зависимостей ==="
     echo ""
     pkg update -y && pkg upgrade -y
-    pkg install -y tur-repo
-    pkg install -y wget screen termux-services openssh net-tools
-    pkg install -y openjdk-8
+    pkg install -y tur-repo 2>/dev/null
+    pkg install -y wget screen termux-services openssh iproute2 net-tools
     echo ""
 
-    if [ -f "$JAVA8_PATH" ]; then
-        echo "OK! Нажми Enter..."
-        read -r
+    install_java
+    local java_ok=$?
+
+    echo ""
+    if [ $java_ok -eq 0 ]; then
+        echo "Все зависимости установлены!"
     else
-        echo "ОШИБКА: Java 8 не найдена. Перезапусти Termux."
-        read -r
+        echo "Java не установлена — остальное ОК."
     fi
+    echo ""
+    echo "Нажми Enter..."
+    read -r
 }
 
 # =====================
@@ -186,16 +279,15 @@ step_deps() {
 
 create_server() {
     if ! deps_installed; then
-        dialog --title "$TITLE" --msgbox "Сначала установи зависимости! (пункт 1)" 6 50
+        dialog --title "$TITLE" --msgbox "Сначала установи зависимости!" 6 44
         return
     fi
 
-    # Имя
     local name
     name=$(dialog --title "Новый сервер" --inputbox "Имя сервера (англ, без пробелов):" 8 50 "" 3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
     if [ -z "$name" ] || ! validate_name "$name"; then
-        dialog --title "Ошибка" --msgbox "Имя может содержать только буквы, цифры, _ и -" 6 50
+        dialog --title "Ошибка" --msgbox "Имя может содержать только буквы, цифры, _ и -" 6 54
         return
     fi
 
@@ -205,7 +297,6 @@ create_server() {
         return
     fi
 
-    # RAM
     local ram
     ram=$(dialog --title "Новый сервер: $name" --menu "Сколько RAM выделить?" 12 44 4 \
         "512M" "Для слабых устройств" \
@@ -215,14 +306,12 @@ create_server() {
         3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
 
-    # Порт
     local default_port
     default_port=$(next_free_port)
     local port
     port=$(dialog --title "Новый сервер: $name" --inputbox "Порт сервера:" 8 40 "$default_port" 3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
 
-    # Ядро
     local core_choice
     core_choice=$(dialog --title "Новый сервер: $name" --menu "Ядро сервера:" 10 54 2 \
         "poseidon" "Project Poseidon (Beta 1.7.3)" \
@@ -238,7 +327,7 @@ create_server() {
         echo ""
         if ! wget -O "$sv_dir/server.jar" "$POSEIDON_URL"; then
             rm -f "$sv_dir/server.jar"
-            dialog --title "Ошибка" --msgbox "Не удалось скачать ядро! Проверь интернет." 6 50
+            dialog --title "Ошибка" --msgbox "Не удалось скачать! Проверь интернет." 6 50
             return
         fi
     else
@@ -248,9 +337,8 @@ create_server() {
     make_start_sh "$sv_dir" "$name" "$ram" "$port"
     write_server_conf "$sv_dir" "$name" "$ram" "$port" "$core_choice"
 
-    # Первый запуск
     if [ -f "$sv_dir/server.jar" ]; then
-        dialog --title "$name" --yesno "Сервер создан!\n\nЗапустить первый раз для генерации конфигов?\n(Нужно будет нажать Ctrl+C после загрузки)" 10 54
+        dialog --title "$name" --yesno "Сервер создан!\n\nЗапустить первый раз для генерации конфигов?\n(Ctrl+C после загрузки)" 10 54
         if [ $? -eq 0 ]; then
             clear
             echo "=== Первый запуск $name ==="
@@ -259,7 +347,7 @@ create_server() {
             cd "$sv_dir" && ./start.sh || true
             patch_server "$sv_dir" "$port"
             echo ""
-            echo "Готово! Нажми Enter..."
+            echo "Нажми Enter..."
             read -r
         fi
     fi
@@ -279,11 +367,11 @@ quick_create() {
             echo "=== Установка зависимостей ==="
             echo ""
             pkg update -y && pkg upgrade -y
-            pkg install -y tur-repo
-            pkg install -y wget screen termux-services openssh net-tools
-            pkg install -y openjdk-8
-            if [ ! -f "$JAVA8_PATH" ]; then
-                echo "ОШИБКА: Java не установилась!"
+            pkg install -y tur-repo 2>/dev/null
+            pkg install -y wget screen termux-services openssh iproute2 net-tools
+            install_java
+            if ! find_java; then
+                echo "Java не установлена!"
                 read -r
                 return
             fi
@@ -334,7 +422,7 @@ quick_create() {
     cd "$sv_dir" && ./start.sh || true
     patch_server "$sv_dir" "$port"
     echo ""
-    echo "Готово! Нажми Enter..."
+    echo "Нажми Enter..."
     read -r
 
     dialog --title "$TITLE" --msgbox "Сервер '$name' готов!\n\nПорт: $port\nУправляй через «Мои серверы»" 9 44
@@ -354,7 +442,6 @@ list_servers_menu() {
             return
         fi
 
-        # Собираем пункты меню
         local items=()
         for srv in "${servers[@]}"; do
             local sv_dir="$BASE_DIR/$srv"
@@ -478,7 +565,7 @@ server_console() {
         dialog --title "$name" --msgbox "Сервер не запущен!" 6 34
         return
     fi
-    dialog --title "$name" --msgbox "Откроется консоль сервера.\n\nВыход: Ctrl+A, затем D" 8 40
+    dialog --title "$name" --msgbox "Откроется консоль.\n\nВыход: Ctrl+A, затем D" 8 40
     screen -r "mbsft-${name}"
 }
 
@@ -492,7 +579,6 @@ server_settings() {
     local online="?"
     [ -f "$sv_dir/server.properties" ] && online=$(grep "online-mode=" "$sv_dir/server.properties" 2>/dev/null | cut -d= -f2)
 
-    # RAM
     local new_ram
     new_ram=$(dialog --title "Настройки: $name" --menu "RAM (сейчас: $RAM):" 12 44 4 \
         "512M" "Для слабых устройств" \
@@ -502,17 +588,14 @@ server_settings() {
         3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
 
-    # Порт
     local new_port
     new_port=$(dialog --title "Настройки: $name" --inputbox "Порт (сейчас: $actual_port):" 8 40 "$actual_port" 3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return
 
-    # Online-mode
     local new_online=false
     dialog --title "Настройки: $name" --yesno "Включить online-mode?\n(Сейчас: $online)\n\nДа = лицензия нужна\nНет = пираты могут заходить" 10 44
     [ $? -eq 0 ] && new_online=true
 
-    # Применяем
     make_start_sh "$sv_dir" "$name" "$new_ram" "$new_port"
 
     if [ -f "$sv_dir/server.properties" ]; then
@@ -559,7 +642,7 @@ LEOF
     chmod +x "$SVDIR/log/run"
     command -v sv-enable &>/dev/null && sv-enable "$sv_service" 2>/dev/null || true
 
-    dialog --title "$name" --msgbox "Сервис '$sv_service' создан!\n\nАвтозапуск при старте Termux\nАвтосохранение каждые 10 мин\n\nУправление:\n  sv up $sv_service\n  sv down $sv_service" 13 48
+    dialog --title "$name" --msgbox "Сервис '$sv_service' создан!\n\nАвтозапуск + автосохранение\n\nУправление:\n  sv up $sv_service\n  sv down $sv_service" 12 48
 }
 
 server_delete() {
@@ -603,12 +686,14 @@ dashboard() {
     ip=$(get_ip)
 
     local java_status="НЕ УСТАНОВЛЕНА"
-    deps_installed && java_status="OK"
+    if find_java; then
+        java_status="$($JAVA_BIN -version 2>&1 | head -1)"
+    fi
 
     local ssh_status="выкл"
     pidof sshd &>/dev/null && ssh_status="порт 8022"
 
-    local info="Java 8:  $java_status\nIP:      $ip\nSSH:     $ssh_status\n\n"
+    local info="Java:  $java_status\nIP:    $ip\nSSH:   $ssh_status\n\n"
 
     local servers
     read -ra servers <<< "$(get_servers)"
@@ -678,7 +763,7 @@ main_loop() {
         done
 
         local status_line="Серверов: $count | Запущено: $running"
-        deps_installed && status_line="Java: OK | $status_line"
+        find_java &>/dev/null && status_line="Java: OK | $status_line"
 
         local choice
         choice=$(dialog --title "$TITLE" \
