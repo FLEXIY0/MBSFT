@@ -82,27 +82,38 @@ find_java
 
 TITLE="MBSFT v${VERSION}"
 
-get_ip() {
+# Локальный IP (для подключения по Wi-Fi)
+get_local_ip() {
     local ip=""
-    # 1. curl ifconfig.me (самый надёжный)
-    if command -v curl &>/dev/null; then
-        ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null)
+    # 1. net-tools (ifconfig) — ставим принудительно в deps
+    if command -v ifconfig &>/dev/null; then
+        ip=$(ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}')
+        [ -z "$ip" ] && ip=$(ifconfig eth0 2>/dev/null | grep 'inet ' | awk '{print $2}')
     fi
-    # 2. iproute2 (ip addr)
+    # 2. iproute2
     if [ -z "$ip" ] && command -v ip &>/dev/null; then
         ip=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
         [ -z "$ip" ] && ip=$(ip addr show eth0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
     fi
-    # 3. net-tools (ifconfig)
-    if [ -z "$ip" ] && command -v ifconfig &>/dev/null; then
-        ip=$(ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}')
-        [ -z "$ip" ] && ip=$(ifconfig eth0 2>/dev/null | grep 'inet ' | awk '{print $2}')
-    fi
-    # 4. termux-wifi-connectioninfo
+    # 3. termux-wifi-connectioninfo
     if [ -z "$ip" ] && command -v termux-wifi-connectioninfo &>/dev/null; then
         ip=$(termux-wifi-connectioninfo 2>/dev/null | grep '"ip"' | cut -d'"' -f4)
     fi
     echo "${ip:-не определён}"
+}
+
+# Внешний IP
+get_external_ip() {
+    local ip=""
+    if command -v curl &>/dev/null; then
+        ip=$(curl -s --max-time 4 ifconfig.me 2>/dev/null)
+    fi
+    echo "${ip:-не определён}"
+}
+
+# Основная функция — локальный IP (для Minecraft / SSH)
+get_ip() {
+    get_local_ip
 }
 
 deps_installed() {
@@ -208,38 +219,45 @@ install_java() {
     echo "=== Установка Java ==="
     echo ""
 
-    # Способ 1: openjdk-8 из tur-repo
-    echo "[1/3] Пробую openjdk-8 (tur-repo)..."
-    pkg install -y openjdk-8 2>/dev/null
+    # Способ 1: openjdk-17 (самый надёжный в современном Termux)
+    echo "[1/3] Пробую openjdk-17..."
+    pkg install -y openjdk-17
     if find_java; then
-        echo "OK: Java найдена — $JAVA_BIN"
-        return 0
-    fi
-
-    # Способ 2: альтернативный скрипт openjdk-8
-    echo "[2/3] Пробую альтернативный openjdk-8..."
-    if command -v wget &>/dev/null; then
-        wget -qO- "$OPENJDK8_ALT_URL" | bash 2>/dev/null
-    elif command -v curl &>/dev/null; then
-        curl -sL "$OPENJDK8_ALT_URL" | bash 2>/dev/null
-    fi
-    if find_java; then
-        echo "OK: Java найдена — $JAVA_BIN"
-        return 0
-    fi
-
-    # Способ 3: openjdk-17
-    echo "[3/3] Пробую openjdk-17..."
-    pkg install -y openjdk-17 2>/dev/null
-    if find_java; then
+        echo ""
         echo "OK: Java 17 найдена — $JAVA_BIN"
-        echo "(Java 17 совместима с большинством серверов)"
+        return 0
+    fi
+
+    # Способ 2: openjdk-8 из tur-repo
+    echo ""
+    echo "[2/3] Пробую openjdk-8 (tur-repo)..."
+    pkg install -y tur-repo
+    pkg install -y openjdk-8
+    if find_java; then
+        echo ""
+        echo "OK: Java 8 найдена — $JAVA_BIN"
+        return 0
+    fi
+
+    # Способ 3: альтернативный скрипт openjdk-8
+    echo ""
+    echo "[3/3] Пробую альтернативный установщик openjdk-8..."
+    if command -v curl &>/dev/null; then
+        curl -sL "$OPENJDK8_ALT_URL" | bash
+    elif command -v wget &>/dev/null; then
+        wget -qO- "$OPENJDK8_ALT_URL" | bash
+    fi
+    if find_java; then
+        echo ""
+        echo "OK: Java 8 найдена — $JAVA_BIN"
         return 0
     fi
 
     echo ""
-    echo "ОШИБКА: Не удалось установить Java ни одним способом!"
-    echo "Попробуй вручную: pkg install openjdk-17"
+    echo "ОШИБКА: Не удалось установить Java!"
+    echo "Попробуй вручную:"
+    echo "  pkg install openjdk-17"
+    echo "  или: pkg install openjdk-8"
     return 1
 }
 
@@ -258,19 +276,31 @@ step_deps() {
     echo "=== Установка зависимостей ==="
     echo ""
     pkg update -y && pkg upgrade -y
-    pkg install -y tur-repo 2>/dev/null
-    pkg install -y wget screen termux-services openssh iproute2 net-tools
-    echo ""
 
+    echo ""
+    echo "--- Основные пакеты ---"
+    pkg install -y wget screen termux-services openssh
+
+    echo ""
+    echo "--- Сетевые утилиты ---"
+    pkg install -y net-tools
+    if ! command -v ifconfig &>/dev/null; then
+        echo "ВНИМАНИЕ: net-tools не установился, пробую ещё раз..."
+        apt install -y net-tools
+    fi
+    pkg install -y iproute2 2>/dev/null
+
+    echo ""
     install_java
     local java_ok=$?
 
+    # Проверка
     echo ""
-    if [ $java_ok -eq 0 ]; then
-        echo "Все зависимости установлены!"
-    else
-        echo "Java не установлена — остальное ОК."
-    fi
+    echo "=== Результат ==="
+    command -v ifconfig &>/dev/null && echo "  ifconfig:  OK" || echo "  ifconfig:  НЕТ"
+    command -v screen &>/dev/null   && echo "  screen:    OK" || echo "  screen:    НЕТ"
+    command -v wget &>/dev/null     && echo "  wget:      OK" || echo "  wget:      НЕТ"
+    [ $java_ok -eq 0 ]             && echo "  java:      OK ($JAVA_BIN)" || echo "  java:      НЕТ"
     echo ""
     echo "Нажми Enter..."
     read -r
@@ -524,7 +554,7 @@ server_start() {
 
     if is_server_running "$name"; then
         local ip port
-        ip=$(get_ip)
+        ip=$(get_local_ip)
         port=$(get_actual_port "$sv_dir")
         dialog --title "$name" --msgbox "Сервер запущен!\n\nПодключение: $ip:$port\nКонсоль: screen -r mbsft-${name}" 9 50
     else
@@ -685,8 +715,9 @@ server_delete() {
 # =====================
 
 dashboard() {
-    local ip
-    ip=$(get_ip)
+    local local_ip ext_ip
+    local_ip=$(get_local_ip)
+    ext_ip=$(get_external_ip)
 
     local java_status="НЕ УСТАНОВЛЕНА"
     if find_java; then
@@ -696,7 +727,7 @@ dashboard() {
     local ssh_status="выкл"
     pidof sshd &>/dev/null && ssh_status="порт 8022"
 
-    local info="Java:  $java_status\nIP:    $ip\nSSH:   $ssh_status\n\n"
+    local info="Java:       $java_status\nЛокальный:  $local_ip\nВнешний:    $ext_ip\nSSH:        $ssh_status\n\n"
 
     local servers
     read -ra servers <<< "$(get_servers)"
@@ -714,13 +745,13 @@ dashboard() {
             local status="стоп" connect="-"
             if is_server_running "$srv"; then
                 status="РАБОТАЕТ"
-                connect="$ip:$actual_port"
+                connect="$local_ip:$actual_port"
             fi
             info+="$(printf '%-16s %-7s %-5s %-10s %s' "$NAME" "$actual_port" "$RAM" "$status" "$connect")\n"
         done
     fi
 
-    dialog --title "Дашборд" --msgbox "$info" 20 60
+    dialog --title "Дашборд" --msgbox "$info" 22 62
 }
 
 # =====================
@@ -739,13 +770,14 @@ step_ssh() {
     sshd
     echo ""
 
-    local user ip
+    local user local_ip ext_ip
     user=$(whoami)
-    ip=$(get_ip)
+    local_ip=$(get_local_ip)
+    ext_ip=$(get_external_ip)
     echo "Готово! Нажми Enter..."
     read -r
 
-    dialog --title "SSH" --msgbox "SSH запущен!\n\nКоманда для подключения с ПК:\n\nssh -p 8022 $user@$ip" 10 48
+    dialog --title "SSH" --msgbox "SSH запущен!\n\nЛокальный IP: $local_ip\nВнешний IP:   $ext_ip\n\nПодключение по Wi-Fi (из дома):\n  ssh -p 8022 $user@$local_ip\n\nПодключение извне:\n  ssh -p 8022 $user@$ext_ip" 15 52
 }
 
 # =====================
