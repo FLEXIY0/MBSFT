@@ -665,18 +665,38 @@ create_server() {
     make_start_sh "$sv_dir" "$name" "$ram" "$port" "$core_choice"
     write_server_conf "$sv_dir" "$name" "$ram" "$port" "$core_choice"
 
+    # Предварительно создаем server.properties, чтобы сервер сразу встал на нужный порт
+    cat > "$sv_dir/server.properties" << EOF
+#Minecraft server properties
+online-mode=false
+server-port=$port
+server-ip=
+spawn-protection=16
+verify-names=false
+max-players=20
+white-list=false
+level-name=world
+view-distance=10
+enable-query=true
+enable-rcon=false
+motd=A Minecraft Server
+EOF
+
     if [ -f "$sv_dir/server.jar" ]; then
-        dialog --title "$name" --yesno "Сервер создан!\n\nЗапустить первый раз для генерации конфигов?\n(Ctrl+C после загрузки)" 10 54
+        dialog --title "$name" --yesno "Сервер создан!\n\nЗапустить сейчас?\n(Сервер запустится в фоне, откроется консоль)" 10 54
         if [ $? -eq 0 ]; then
             clear
-            echo "=== Первый запуск $name ==="
-            echo "Нажми Ctrl+C после загрузки"
-            echo ""
-            cd "$sv_dir" && ./start.sh || true
-            patch_server "$sv_dir" "$port"
+            echo "=== Запуск $name ==="
+            server_start "$name"
+            
+            echo "Сервер запущен в screen!"
+            echo "Сейчас откроется консоль."
+            echo "Чтобы выйти из консоли (оставив сервер работать), нажми: Ctrl+A, затем D"
+            echo "Чтобы остановить сервер: напиши 'stop' в консоли."
             echo ""
             echo "Нажми Enter..."
             read -r
+            server_console "$name"
         fi
     fi
 
@@ -1205,4 +1225,7 @@ main_loop() {
 # =====================
 # Main
 # =====================
+# Очистка мертвых сессий screen
+screen -wipe >/dev/null 2>&1
+
 main_loop
