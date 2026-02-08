@@ -870,7 +870,8 @@ server_start() {
     
     # Запуск в новой сессии tmux в фоне (-d)
     # Имя сессии: mbsft-$name
-    tmux new-session -d -s "mbsft-$name" "cd \"$sv_dir\" && ./start.sh"
+    # Добавляем '; read' чтобы консоль не закрывалась при ошибке/остановке
+    tmux new-session -d -s "mbsft-$name" "cd \"$sv_dir\" && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter, чтобы закрыть это окно...'; read"
     
     sleep 2 # Даем время на запуск
 
