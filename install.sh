@@ -6,22 +6,108 @@
 # ============================================
 
 # =====================
+# Автообновление
+# =====================
+SCRIPT_URL="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh"
+SCRIPT_PATH="$HOME/install.sh"
+CURRENT_VERSION="2.3"
+
+auto_update() {
+    # Пропускаем если скрипт запущен из временного файла
+    if [[ "$0" == *".mbsft_install_"* ]] || [[ "$0" == "/tmp/"* ]]; then
+        return 0
+    fi
+    
+    # Проверяем наличие curl или wget
+    local downloader=""
+    if command -v curl &>/dev/null; then
+        downloader="curl"
+    elif command -v wget &>/dev/null; then
+        downloader="wget"
+    else
+        return 0  # Нет загрузчика, пропускаем обновление
+    fi
+    
+    # Скачиваем новую версию во временный файл
+    local tmp_script=$(mktemp "$HOME/.mbsft_update_XXXXXX.sh")
+    
+    if [ "$downloader" = "curl" ]; then
+        curl -sL "$SCRIPT_URL" -o "$tmp_script" 2>/dev/null || { rm -f "$tmp_script"; return 0; }
+    else
+        wget -qO "$tmp_script" "$SCRIPT_URL" 2>/dev/null || { rm -f "$tmp_script"; return 0; }
+    fi
+    
+    # Проверяем что файл скачался
+    if [ ! -s "$tmp_script" ]; then
+        rm -f "$tmp_script"
+        return 0
+    fi
+    
+    # Извлекаем версию из скачанного файла
+    local remote_version=$(grep '^CURRENT_VERSION=' "$tmp_script" | head -1 | cut -d'"' -f2)
+    
+    # Сравниваем версии
+    if [ -n "$remote_version" ] && [ "$remote_version" != "$CURRENT_VERSION" ]; then
+        echo "╔════════════════════════════════════════╗"
+        echo "║   Обновление MBSFT                     ║"
+        echo "╚════════════════════════════════════════╝"
+        echo ""
+        echo "  Текущая версия:  $CURRENT_VERSION"
+        echo "  Новая версия:    $remote_version"
+        echo ""
+        echo "  Обновляю скрипт..."
+        
+        # Сохраняем новую версию
+        cp "$tmp_script" "$SCRIPT_PATH"
+        chmod +x "$SCRIPT_PATH"
+        rm -f "$tmp_script"
+        
+        echo "  ✓ Обновление завершено!"
+        echo ""
+        echo "  Перезапускаю скрипт..."
+        sleep 2
+        
+        # Перезапускаем обновлённый скрипт
+        exec bash "$SCRIPT_PATH" "$@"
+        exit 0
+    fi
+    
+    rm -f "$tmp_script"
+}
+
+# Запускаем автообновление
+auto_update "$@"
+
+# =====================
 # Fix: curl | bash
 # Если stdin — не терминал (пайп), сохраняем скрипт
-# во временный файл и перезапускаем из файла
+# в постоянный файл и перезапускаем из него
 # =====================
 if [ ! -t 0 ]; then
-    TMPSCRIPT=$(mktemp "$HOME/.mbsft_install_XXXXXX.sh")
-    cat > "$TMPSCRIPT"
-    exec bash "$TMPSCRIPT" "$@"
+    # Сохраняем в домашнюю директорию
+    cat > "$SCRIPT_PATH"
+    chmod +x "$SCRIPT_PATH"
+    echo ""
+    echo "╔════════════════════════════════════════╗"
+    echo "║   MBSFT установлен!                    ║"
+    echo "╚════════════════════════════════════════╝"
+    echo ""
+    echo "  Скрипт сохранён: $SCRIPT_PATH"
+    echo "  Для повторного запуска используй:"
+    echo ""
+    echo "    bash install.sh"
+    echo ""
+    echo "  Запускаю..."
+    sleep 2
+    exec bash "$SCRIPT_PATH" "$@"
     exit
 fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
 POSEIDON_URL="https://ci.project-poseidon.com/job/Project-Poseidon/lastSuccessfulBuild/artifact/target/poseidon-1.1.8.jar"
-OPENJDK8_ALT_URL="https://raw.githubusercontent.com/nicola02nb/termux-openjdk-8/main/install.sh"
-VERSION="2.2"
+JAVA8_INSTALL_SCRIPT="https://raw.githubusercontent.com/MasterDevX/Termux-Java/master/installjava"
+VERSION="2.3"
 
 # Java: будет найдена динамически
 JAVA_BIN=""
@@ -30,13 +116,12 @@ JAVA_BIN=""
 # Поиск Java
 # =====================
 find_java() {
-    # Приоритет: java-8 > java-17 > любая java в PATH
+    # Приоритет: только Java 8
     local paths=(
         "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
         "/data/data/com.termux/files/usr/lib/jvm/java-8/bin/java"
         "$HOME/.jdk8/bin/java"
-        "/data/data/com.termux/files/usr/lib/jvm/java-17-openjdk/bin/java"
-        "/data/data/com.termux/files/usr/lib/jvm/java-17/bin/java"
+        "$PREFIX/share/jdk8/bin/java"
     )
     for p in "${paths[@]}"; do
         if [ -x "$p" ]; then
@@ -44,10 +129,13 @@ find_java() {
             return 0
         fi
     done
-    # Последний шанс — java в PATH
+    # Последний шанс — java в PATH (только если это Java 8)
     if command -v java &>/dev/null; then
-        JAVA_BIN="$(command -v java)"
-        return 0
+        local java_ver=$(java -version 2>&1 | head -1)
+        if echo "$java_ver" | grep -q "1.8\|openjdk-8"; then
+            JAVA_BIN="$(command -v java)"
+            return 0
+        fi
     fi
     return 1
 }
@@ -216,48 +304,54 @@ EOF
 
 install_java() {
     echo ""
-    echo "=== Установка Java ==="
+    echo "=== Установка Java 8 ==="
     echo ""
 
-    # Способ 1: openjdk-17 (самый надёжный в современном Termux)
-    echo "[1/3] Пробую openjdk-17..."
-    pkg install -y openjdk-17
-    if find_java; then
-        echo ""
-        echo "OK: Java 17 найдена — $JAVA_BIN"
-        return 0
+    # Способ 1: MasterDevX/Termux-Java (основной метод)
+    echo "[1/3] Устанавливаю Java 8 через Termux-Java..."
+    if ! command -v wget &>/dev/null; then
+        echo "Устанавливаю wget..."
+        pkg install -y wget
+    fi
+    
+    # Скачиваем и запускаем установщик
+    local tmpscript="/tmp/installjava_$$"
+    if wget -O "$tmpscript" "$JAVA8_INSTALL_SCRIPT" 2>/dev/null; then
+        bash "$tmpscript"
+        rm -f "$tmpscript"
+        if find_java; then
+            echo ""
+            echo "✓ OK: Java 8 установлена — $JAVA_BIN"
+            return 0
+        fi
     fi
 
     # Способ 2: openjdk-8 из tur-repo
     echo ""
     echo "[2/3] Пробую openjdk-8 (tur-repo)..."
-    pkg install -y tur-repo
+    pkg install -y tur-repo 2>/dev/null
     pkg install -y openjdk-8
     if find_java; then
         echo ""
-        echo "OK: Java 8 найдена — $JAVA_BIN"
+        echo "✓ OK: Java 8 найдена — $JAVA_BIN"
         return 0
     fi
 
-    # Способ 3: альтернативный скрипт openjdk-8
+    # Способ 3: прямая установка через pkg
     echo ""
-    echo "[3/3] Пробую альтернативный установщик openjdk-8..."
-    if command -v curl &>/dev/null; then
-        curl -sL "$OPENJDK8_ALT_URL" | bash
-    elif command -v wget &>/dev/null; then
-        wget -qO- "$OPENJDK8_ALT_URL" | bash
-    fi
+    echo "[3/3] Пробую pkg install openjdk-8..."
+    pkg install -y openjdk-8
     if find_java; then
         echo ""
-        echo "OK: Java 8 найдена — $JAVA_BIN"
+        echo "✓ OK: Java 8 найдена — $JAVA_BIN"
         return 0
     fi
 
     echo ""
-    echo "ОШИБКА: Не удалось установить Java!"
+    echo "✗ ОШИБКА: Не удалось установить Java 8!"
     echo "Попробуй вручную:"
-    echo "  pkg install openjdk-17"
-    echo "  или: pkg install openjdk-8"
+    echo "  pkg install wget && wget https://raw.githubusercontent.com/MasterDevX/Termux-Java/master/installjava && bash installjava"
+    echo "  или: pkg install tur-repo && pkg install openjdk-8"
     return 1
 }
 
@@ -269,7 +363,7 @@ step_deps() {
         return
     fi
 
-    dialog --title "$TITLE" --yesno "Установить зависимости?\n\n• Java (OpenJDK 8 / 17)\n• screen, wget\n• openssh, iproute2, net-tools\n• termux-services" 12 46
+    dialog --title "$TITLE" --yesno "Установить зависимости?\n\n• Java 8 (OpenJDK 8)\n• screen, wget\n• openssh, iproute2, net-tools\n• termux-services" 12 46
     [ $? -ne 0 ] && return
 
     clear
