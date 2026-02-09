@@ -852,6 +852,21 @@ self_update() {
     fi
 }
 
+show_banner() {
+    local ORANGE='\033[38;5;208m'
+    local NC='\033[0m' # No Color
+
+    echo -e "${ORANGE}███╗   ███╗██████╗ ███████╗███████╗████████╗${NC}"
+    echo -e "${ORANGE}████╗ ████║██╔══██╗██╔════╝██╔════╝╚══██╔══╝${NC}"
+    echo -e "${ORANGE}██╔████╔██║██████╔╝███████╗█████╗     ██║   ${NC}"
+    echo -e "${ORANGE}██║╚██╔╝██║██╔══██╗╚════██║██╔══╝     ██║   ${NC}"
+    echo -e "${ORANGE}██║ ╚═╝ ██║██████╔╝███████║██║        ██║   ${NC}"
+    echo -e "${ORANGE}╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝        ╚═╝   ${NC}"
+    echo -e "${ORANGE}      Minecraft Beta Server        ${NC}"
+    echo -e "${ORANGE}         For Termux v$VERSION      ${NC}"
+    echo ""
+}
+
 # =====================
 # Main Loop
 # =====================
@@ -861,7 +876,7 @@ main_loop() {
 
     while true; do
         clear
-        echo "=== MBSFT v${VERSION} CLI ==="
+        show_banner
         echo "1) Установить зависимости"
         echo "2) Создать сервер"
         echo "3) Мои серверы"
