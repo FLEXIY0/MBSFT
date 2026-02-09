@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="3.0"
+VERSION="3.1"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -436,22 +436,7 @@ run_install_deps() {
     echo "=== Установка зависимостей ==="
     export DEBIAN_FRONTEND=noninteractive
     pkg update -y && pkg upgrade -y -o Dpkg::Options::="--force-confnew"
-    pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh iproute2 net-tools termux-api
-
-    echo ""
-    echo "=== Активация termux-services ==="
-    source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null || true
-
-    # Запускаем runsvdir если не запущен
-    if ! pgrep -x runsvdir >/dev/null; then
-        echo "Запуск runsvdir..."
-        mkdir -p "$PREFIX/var/service"
-        nohup runsvdir "$PREFIX/var/service" >/dev/null 2>&1 &
-        sleep 2
-        echo "✓ runsvdir запущен"
-    else
-        echo "✓ runsvdir уже работает"
-    fi
+    pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux openssh iproute2 net-tools termux-api
 
     install_java
     echo ""
@@ -470,7 +455,7 @@ run_uninstall_deps() {
     echo "=== Удаление зависимостей ==="
     echo "ВНИМАНИЕ! Будут удалены:"
     echo " - Java (Ubuntu/proot-distro и все данные внутри)"
-    echo " - Пакеты: wget, tmux, openssh, termux-services, iproute2, net-tools, termux-api"
+    echo " - Пакеты: wget, tmux, openssh, iproute2, net-tools, termux-api"
     echo ""
     echo "Если вы подключены по SSH — соединение разорвется!"
     read -p "Точно продолжить? (y/n): " yn
@@ -480,10 +465,10 @@ run_uninstall_deps() {
     if command -v proot-distro &>/dev/null; then
         proot-distro remove ubuntu 2>/dev/null
     fi
-    
+
     echo "Удаление пакетов..."
-    pkg uninstall -y proot-distro wget tmux termux-services openssh iproute2 net-tools termux-api
-    
+    pkg uninstall -y proot-distro wget tmux openssh iproute2 net-tools termux-api
+
     echo "Готово."
     read -r
 }
@@ -695,89 +680,54 @@ server_delete() {
     remove_watchdog_service "$name" 2>/dev/null
     remove_autosave_service "$name" 2>/dev/null
     rm -rf "$BASE_DIR/$name"
-    if [ -d "$PREFIX/var/service/mbsft-$name" ]; then
-        sv down "mbsft-$name" 2>/dev/null
-        rm -rf "$PREFIX/var/service/mbsft-$name"
-    fi
     echo "Удалено."
     read -r
 }
 
 # =====================
-# WATCHDOG SERVICE
+# WATCHDOG SERVICE (простой фоновый процесс)
 # =====================
 
 setup_watchdog_service() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
-    local service_dir="$PREFIX/var/service/mbsft-$name-watchdog"
+    local pid_file="$sv_dir/.watchdog.pid"
+    local log_file="$sv_dir/.watchdog.log"
 
-    mkdir -p "$service_dir"
-
-    read_server_conf "$sv_dir"
-
-    cat > "$service_dir/run" << 'EOFRUN'
-#!/data/data/com.termux/files/usr/bin/sh
-exec 2>&1
-
-SERVER_NAME="SERVERNAME_PLACEHOLDER"
-SERVER_DIR="SERVERDIR_PLACEHOLDER"
-RAM="RAM_PLACEHOLDER"
-
-while true; do
-    if ! tmux has-session -t "mbsft-$SERVER_NAME" 2>/dev/null; then
-        echo "[$(date)] Server crashed, restarting in 5 seconds..."
-        sleep 5
-        cd "$SERVER_DIR" || exit 1
-        tmux new-session -d -s "mbsft-$SERVER_NAME" "cd \"$SERVER_DIR\" && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter...'; read"
-        echo "[$(date)] Server restarted"
-    fi
-    sleep 10
-done
-EOFRUN
-
-    sed -i "s|SERVERNAME_PLACEHOLDER|$name|g" "$service_dir/run"
-    sed -i "s|SERVERDIR_PLACEHOLDER|$sv_dir|g" "$service_dir/run"
-    sed -i "s|RAM_PLACEHOLDER|$RAM|g" "$service_dir/run"
-
-    chmod +x "$service_dir/run"
-
-    mkdir -p "$service_dir/log"
-    cat > "$service_dir/log/run" << 'EOFLOG'
-#!/data/data/com.termux/files/usr/bin/sh
-exec svlogd -tt ./main
-EOFLOG
-    chmod +x "$service_dir/log/run"
-
-    # Проверяем что runsvdir запущен
-    if ! pgrep -x runsvdir >/dev/null; then
-        echo "⚠️  runsvdir не запущен. Запускаю..."
-        mkdir -p "$PREFIX/var/service"
-        nohup runsvdir "$PREFIX/var/service" >/dev/null 2>&1 &
-        sleep 2
+    # Если уже запущен - останавливаем
+    if [ -f "$pid_file" ]; then
+        local old_pid=$(cat "$pid_file")
+        kill "$old_pid" 2>/dev/null
+        rm -f "$pid_file"
     fi
 
-    # Ждем пока сервис подхватится runsvdir (обычно до 5 секунд)
-    echo "Ожидание запуска сервиса..."
-    sleep 3
+    # Запускаем фоновый процесс мониторинга
+    nohup bash -c "
+        while true; do
+            if ! tmux has-session -t 'mbsft-$name' 2>/dev/null; then
+                echo \"[\$(date)] Server crashed, restarting in 5 seconds...\"
+                sleep 5
+                cd '$sv_dir' || exit 1
+                tmux new-session -d -s 'mbsft-$name' \"cd '$sv_dir' && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter...'; read\"
+                echo \"[\$(date)] Server restarted\"
+            fi
+            sleep 10
+        done
+    " > "$log_file" 2>&1 &
 
-    # Проверяем статус
-    if sv status "mbsft-$name-watchdog" 2>/dev/null | grep -q "run"; then
-        echo "✓ Сервис watchdog успешно запущен"
-    else
-        # Пытаемся запустить вручную
-        sv up "mbsft-$name-watchdog" 2>/dev/null
-        sleep 1
-    fi
+    local pid=$!
+    echo $pid > "$pid_file"
+    echo "✓ Автоперезапуск включен (PID: $pid)"
 }
 
 remove_watchdog_service() {
     local name="$1"
-    local service_dir="$PREFIX/var/service/mbsft-$name-watchdog"
+    local pid_file="$BASE_DIR/$name/.watchdog.pid"
 
-    if [ -d "$service_dir" ]; then
-        sv down "mbsft-$name-watchdog" 2>/dev/null
-        rm -rf "$service_dir"
+    if [ -f "$pid_file" ]; then
+        local pid=$(cat "$pid_file")
+        kill "$pid" 2>/dev/null
+        rm -f "$pid_file"
     fi
 }
 
@@ -796,84 +746,55 @@ toggle_watchdog() {
         # Включаем
         setup_watchdog_service "$name"
         sed -i 's/^WATCHDOG_ENABLED=.*/WATCHDOG_ENABLED=yes/' "$sv_dir/.mbsft.conf"
-        echo "✓ Автоперезапуск включен (запустится в течение 5 секунд)"
     fi
     read -r
 }
 
 # =====================
-# AUTOSAVE SERVICE
+# AUTOSAVE SERVICE (простой фоновый процесс)
 # =====================
 
 setup_autosave_service() {
     local name="$1"
     local interval="$2"
     local sv_dir="$BASE_DIR/$name"
-    local service_dir="$PREFIX/var/service/mbsft-$name-autosave"
-
-    mkdir -p "$service_dir"
+    local pid_file="$sv_dir/.autosave.pid"
+    local log_file="$sv_dir/.autosave.log"
 
     local interval_seconds=$((interval * 60))
 
-    cat > "$service_dir/run" << 'EOFRUN'
-#!/data/data/com.termux/files/usr/bin/sh
-exec 2>&1
-
-SERVER_NAME="SERVERNAME_PLACEHOLDER"
-INTERVAL=INTERVAL_PLACEHOLDER
-
-echo "[$(date)] Autosave service started (interval: ${INTERVAL}s)"
-
-while true; do
-    sleep $INTERVAL
-    if tmux has-session -t "mbsft-$SERVER_NAME" 2>/dev/null; then
-        tmux send-keys -t "mbsft-$SERVER_NAME" "saveall" C-m
-        echo "[$(date)] Sent saveall to $SERVER_NAME"
-    fi
-done
-EOFRUN
-
-    sed -i "s|SERVERNAME_PLACEHOLDER|$name|g" "$service_dir/run"
-    sed -i "s|INTERVAL_PLACEHOLDER|$interval_seconds|g" "$service_dir/run"
-
-    chmod +x "$service_dir/run"
-
-    mkdir -p "$service_dir/log"
-    cat > "$service_dir/log/run" << 'EOFLOG'
-#!/data/data/com.termux/files/usr/bin/sh
-exec svlogd -tt ./main
-EOFLOG
-    chmod +x "$service_dir/log/run"
-
-    # Проверяем что runsvdir запущен
-    if ! pgrep -x runsvdir >/dev/null; then
-        echo "⚠️  runsvdir не запущен. Запускаю..."
-        mkdir -p "$PREFIX/var/service"
-        nohup runsvdir "$PREFIX/var/service" >/dev/null 2>&1 &
-        sleep 2
+    # Если уже запущен - останавливаем
+    if [ -f "$pid_file" ]; then
+        local old_pid=$(cat "$pid_file")
+        kill "$old_pid" 2>/dev/null
+        rm -f "$pid_file"
     fi
 
-    # Ждем пока сервис подхватится runsvdir (обычно до 5 секунд)
-    echo "Ожидание запуска сервиса..."
-    sleep 3
+    # Запускаем фоновый процесс автосохранения
+    nohup bash -c "
+        echo \"[\$(date)] Autosave service started (interval: ${interval_seconds}s)\"
+        while true; do
+            sleep $interval_seconds
+            if tmux has-session -t 'mbsft-$name' 2>/dev/null; then
+                tmux send-keys -t 'mbsft-$name' 'save-all' C-m
+                echo \"[\$(date)] Sent save-all to mbsft-$name\"
+            fi
+        done
+    " > "$log_file" 2>&1 &
 
-    # Проверяем статус
-    if sv status "mbsft-$name-autosave" 2>/dev/null | grep -q "run"; then
-        echo "✓ Сервис autosave успешно запущен"
-    else
-        # Пытаемся запустить вручную
-        sv up "mbsft-$name-autosave" 2>/dev/null
-        sleep 1
-    fi
+    local pid=$!
+    echo $pid > "$pid_file"
+    echo "✓ Автосохранение включено (интервал: $interval мин, PID: $pid)"
 }
 
 remove_autosave_service() {
     local name="$1"
-    local service_dir="$PREFIX/var/service/mbsft-$name-autosave"
+    local pid_file="$BASE_DIR/$name/.autosave.pid"
 
-    if [ -d "$service_dir" ]; then
-        sv down "mbsft-$name-autosave" 2>/dev/null
-        rm -rf "$service_dir"
+    if [ -f "$pid_file" ]; then
+        local pid=$(cat "$pid_file")
+        kill "$pid" 2>/dev/null
+        rm -f "$pid_file"
     fi
 }
 
@@ -883,21 +804,16 @@ configure_autosave() {
 
     clear
     show_banner
-    echo "=== Настройка автосохранения: $name ==="
 
     read_server_conf "$sv_dir"
 
     local current_status="выкл"
     [ "$AUTOSAVE_ENABLED" = "yes" ] && current_status="вкл"
 
-    echo "Текущий статус: $current_status"
-    echo "Текущий интервал: $AUTOSAVE_INTERVAL мин"
-    echo ""
-
     local menu_items=("Включить автосохранение" "Отключить автосохранение" "Интервал: 3 минуты" "Интервал: 5 минут" "Интервал: 10 минут" "Свой интервал (ручной ввод)" "Назад")
 
     # Header с текущими настройками
-    local menu_header="Автосохранение: $current_status | Интервал: $AUTOSAVE_INTERVAL мин"
+    local menu_header="Настройка автосохранения: $name | Статус: $current_status | Интервал: $AUTOSAVE_INTERVAL мин"
 
     local choice
     choice=$(arrow_menu menu_items "$menu_header")
@@ -908,8 +824,6 @@ configure_autosave() {
             if [ "$AUTOSAVE_ENABLED" != "yes" ]; then
                 setup_autosave_service "$name" "$AUTOSAVE_INTERVAL"
                 sed -i 's/^AUTOSAVE_ENABLED=.*/AUTOSAVE_ENABLED=yes/' "$sv_dir/.mbsft.conf"
-                echo "✓ Автосохранение включено (интервал: $AUTOSAVE_INTERVAL мин)"
-                echo "  Запустится в течение 5 секунд"
             else
                 echo "Уже включено"
             fi
@@ -945,7 +859,6 @@ configure_autosave() {
             if [ "$AUTOSAVE_ENABLED" = "yes" ]; then
                 remove_autosave_service "$name"
                 setup_autosave_service "$name" "$new_interval"
-                echo "✓ Интервал установлен: $new_interval мин (перезапускается...)"
             else
                 echo "✓ Интервал установлен: $new_interval мин"
             fi
@@ -969,12 +882,13 @@ server_manage() {
         read_server_conf "$BASE_DIR/$name"
         local server_port="$PORT"
 
-        # Статусы сервисов
+        # Статусы сервисов (проверка через pid файлы)
         local watchdog_status="выкл"
         local watchdog_real_status=""
         if [ "$WATCHDOG_ENABLED" = "yes" ]; then
             watchdog_status="вкл"
-            if sv status "mbsft-$name-watchdog" 2>/dev/null | grep -q "run:"; then
+            local wd_pid_file="$BASE_DIR/$name/.watchdog.pid"
+            if [ -f "$wd_pid_file" ] && kill -0 $(cat "$wd_pid_file") 2>/dev/null; then
                 watchdog_real_status=" ✓"
             else
                 watchdog_real_status=" ✗"
@@ -985,15 +899,13 @@ server_manage() {
         local autosave_real_status=""
         if [ "$AUTOSAVE_ENABLED" = "yes" ]; then
             autosave_status="вкл (${AUTOSAVE_INTERVAL}м)"
-            if sv status "mbsft-$name-autosave" 2>/dev/null | grep -q "run:"; then
+            local as_pid_file="$BASE_DIR/$name/.autosave.pid"
+            if [ -f "$as_pid_file" ] && kill -0 $(cat "$as_pid_file") 2>/dev/null; then
                 autosave_real_status=" ✓"
             else
                 autosave_real_status=" ✗"
             fi
         fi
-
-        echo "=== Управление: $name [$status] :$server_port ==="
-        echo "Автоперезапуск: $watchdog_status$watchdog_real_status | Автосохранение: $autosave_status$autosave_real_status"
 
         local menu_items=("Запустить" "Остановить" "Консоль" "Автоперезапуск" "Автосохранение" "Удалить" "Назад")
 
@@ -1072,15 +984,24 @@ step_ssh() {
             0)
                 echo "=== Настройка SSH ==="
                 export DEBIAN_FRONTEND=noninteractive
-                pkg install -y -o Dpkg::Options::="--force-confnew" openssh termux-services
-                sv-enable sshd
+                pkg install -y -o Dpkg::Options::="--force-confnew" openssh
+
+                # Создаем автозапуск через boot-скрипт
+                mkdir -p "$HOME/.termux/boot"
+                cat > "$HOME/.termux/boot/start-sshd.sh" << 'EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+termux-wake-lock
+sshd
+EOF
+                chmod +x "$HOME/.termux/boot/start-sshd.sh"
+
                 if ! pgrep sshd >/dev/null; then sshd; fi
 
                 read -p "Хочешь задать пароль? (y/n): " yn
                 if [[ "$yn" == "y" ]]; then
                     passwd
                 fi
-                echo "SSH включен."
+                echo "SSH включен. Автозапуск настроен."
                 read -r
                 ;;
             1)
@@ -1136,12 +1057,9 @@ step_ssh() {
             4)
                 echo "Ремонт..."
                 pkill sshd
-                sv-disable sshd 2>/dev/null
                 chmod 700 "$HOME" "$HOME/.ssh"
                 chmod 600 "$HOME/.ssh/authorized_keys" 2>/dev/null
                 ssh-keygen -A
-                source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null
-                sv-enable sshd
                 sshd
                 echo "Готово."
                 read -r
