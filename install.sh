@@ -141,49 +141,48 @@ CREATED=$(date '+%Y-%m-%d %H:%M')
 EOF
 }
 
-# Простое меню со стрелочками (безопасно для tty)
+# Меню со стрелочками через fzf
 arrow_menu() {
     local -n items=$1
-    local selected=0
-    local key
 
-    while true; do
-        # Показываем меню
-        for i in "${!items[@]}"; do
-            if [ $i -eq $selected ]; then
-                echo -e "\033[1;32m→ ${items[$i]}\033[0m"  # Зеленый с стрелкой
-            else
-                echo "  ${items[$i]}"
-            fi
-        done
-
-        # Читаем клавишу
-        read -rsn1 key
-
-        if [[ "$key" == $'\x1b' ]]; then  # ESC sequence
-            read -rsn2 -t 0.1 key
-            case "$key" in
-                '[A') # Up arrow
-                    ((selected--))
-                    [ $selected -lt 0 ] && selected=$((${#items[@]}-1))
-                    ;;
-                '[B') # Down arrow
-                    ((selected++))
-                    [ $selected -ge ${#items[@]} ] && selected=0
-                    ;;
-            esac
-            # Очищаем меню (поднимаемся вверх)
-            for ((i=0; i<${#items[@]}; i++)); do
-                echo -ne "\033[1A\033[2K"
-            done
-        elif [[ "$key" == "" ]]; then  # Enter
-            echo "$selected"
-            return 0
-        elif [[ "$key" == "q" ]]; then  # q = quit/back
+    # Проверка наличия fzf
+    if ! command -v fzf &>/dev/null; then
+        echo "Устанавливаю fzf..." >&2
+        pkg install -y fzf || {
+            echo "Ошибка установки fzf!" >&2
             echo "-1"
             return 1
+        }
+    fi
+
+    # Показываем меню через fzf
+    local selected
+    selected=$(printf '%s\n' "${items[@]}" | fzf \
+        --height=~100% \
+        --reverse \
+        --prompt="→ " \
+        --pointer="●" \
+        --color='fg:7,fg+:2,bg+:-1,pointer:2,prompt:2' \
+        --no-info \
+        --no-scrollbar)
+
+    # Если ничего не выбрано (ESC), возвращаем -1
+    if [ -z "$selected" ]; then
+        echo "-1"
+        return 1
+    fi
+
+    # Находим индекс выбранного элемента
+    for i in "${!items[@]}"; do
+        if [ "${items[$i]}" = "$selected" ]; then
+            echo "$i"
+            return 0
         fi
     done
+
+    # Если не нашли (не должно случиться)
+    echo "-1"
+    return 1
 }
 
 read_server_conf() {
