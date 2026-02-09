@@ -863,7 +863,8 @@ show_banner() {
     echo -e "${ORANGE}██║ ╚═╝ ██║██████╔╝███████║██║        ██║   ${NC}"
     echo -e "${ORANGE}╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝        ╚═╝   ${NC}"
     echo -e "${ORANGE}      Minecraft Beta Server        ${NC}"
-    echo -e "${ORANGE}         For Termux v$VERSION      ${NC}"
+    echo -e "${ORANGE}            For Termux  ${NC}"
+    echo -e "${ORANGE}              v$VERSION     ${NC}"
     echo ""
 }
 
