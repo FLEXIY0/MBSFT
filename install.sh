@@ -1126,20 +1126,29 @@ dashboard() {
 UPDATE_URL="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh"
 
 self_update() {
-    echo "Проверка обновлений..."
+    local manual="${1:-no}"
+
+    if [ "$manual" = "yes" ]; then
+        echo "Проверка обновлений..."
+    fi
+
     # Скачиваем скрипт во временную переменную (с анти-кеш параметром)
     local remote_content
     remote_content=$(curl -sL -H 'Cache-Control: no-cache' --max-time 3 "${UPDATE_URL}?v=$(date +%s)")
-    
+
     if [ -z "$remote_content" ]; then
-        # Если интернета нет или ошибка — молча пропускаем
+        if [ "$manual" = "yes" ]; then
+            echo "Ошибка: не удалось проверить обновления."
+            echo "Проверь подключение к интернету."
+            read -r
+        fi
         return
     fi
-    
+
     # Парсим версию (ищем строку VERSION="...")
     local remote_ver
     remote_ver=$(echo "$remote_content" | grep '^VERSION=' | head -1 | cut -d'"' -f2)
-    
+
     # Если версии отличаются и remote_ver не пустая
     if [ -n "$remote_ver" ] && [ "$remote_ver" != "$VERSION" ]; then
         echo ""
@@ -1150,20 +1159,31 @@ self_update() {
             # Перезаписываем текущий запущенный файл
             echo "$remote_content" > "$0"
             chmod +x "$0"
-            
+
             # Если мы не в bin, но mbsft есть в bin — обновим и его
             if [ "$0" != "$PREFIX/bin/mbsft" ] && [ -f "$PREFIX/bin/mbsft" ]; then
                 echo "$remote_content" > "$PREFIX/bin/mbsft"
                 chmod +x "$PREFIX/bin/mbsft"
                 echo "Системная команда также обновлена."
             fi
-            
+
             echo "Перезапуск..."
             echo ""
             # Перезапускаем скрипт
             exec bash "$0" "$@"
         fi
+    else
+        if [ "$manual" = "yes" ]; then
+            echo "✓ Установлена последняя версия: $VERSION"
+            read -r
+        fi
     fi
+}
+
+manual_check_update() {
+    clear
+    show_banner
+    self_update "yes"
 }
 
 show_banner() {
@@ -1197,7 +1217,7 @@ main_loop() {
         read -ra servers <<< "$(get_servers)"
         local srv_count=${#servers[@]}
 
-        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Удалить всё" "Выход")
+        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Проверить обновление" "Удалить всё" "Выход")
         local choice
         choice=$(arrow_menu menu_items)
 
@@ -1207,8 +1227,9 @@ main_loop() {
             2) list_servers ;;
             3) dashboard ;;
             4) step_ssh ;;
-            5) uninstall_all ;;
-            6|-1) exit 0 ;;
+            5) manual_check_update ;;
+            6) uninstall_all ;;
+            7|-1) exit 0 ;;
         esac
     done
 }
