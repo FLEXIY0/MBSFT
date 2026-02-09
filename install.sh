@@ -411,7 +411,7 @@ run_install_deps() {
     echo "=== Установка зависимостей ==="
     export DEBIAN_FRONTEND=noninteractive
     pkg update -y && pkg upgrade -y -o Dpkg::Options::="--force-confnew"
-    pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh iproute2 net-tools
+    pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh iproute2 net-tools termux-api
     install_java
     echo ""
     echo "=== Установка MBSFT в систему ==="
@@ -429,7 +429,7 @@ run_uninstall_deps() {
     echo "=== Удаление зависимостей ==="
     echo "ВНИМАНИЕ! Будут удалены:"
     echo " - Java (Ubuntu/proot-distro и все данные внутри)"
-    echo " - Пакеты: wget, tmux, openssh, termux-services, iproute2, net-tools"
+    echo " - Пакеты: wget, tmux, openssh, termux-services, iproute2, net-tools, termux-api"
     echo ""
     echo "Если вы подключены по SSH — соединение разорвется!"
     read -p "Точно продолжить? (y/n): " yn
@@ -441,7 +441,7 @@ run_uninstall_deps() {
     fi
     
     echo "Удаление пакетов..."
-    pkg uninstall -y proot-distro wget tmux termux-services openssh iproute2 net-tools
+    pkg uninstall -y proot-distro wget tmux termux-services openssh iproute2 net-tools termux-api
     
     echo "Готово."
     read -r
