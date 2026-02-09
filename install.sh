@@ -623,11 +623,26 @@ server_console() {
         read -r
         return
     fi
-    
+
     echo "Подключение к консоли $name..."
-    echo "Нажми 'Ctrl+B, затем D' чтобы выйти из консоли (оставить сервер работать)."
+
+    # Проверяем находимся ли мы уже в tmux (вложенная сессия)
+    if [ -n "$TMUX" ]; then
+        echo "⚠️  Ты уже в tmux! Используй: Ctrl+B, затем B, затем D для выхода"
+        echo "(Двойной prefix для вложенного tmux)"
+    else
+        echo "Нажми Ctrl+B, затем D чтобы выйти из консоли (оставить сервер работать)."
+    fi
+
     sleep 2
-    tmux attach-session -t "mbsft-$name"
+
+    # Если мы в tmux - используем switch-client вместо attach
+    if [ -n "$TMUX" ]; then
+        tmux switch-client -t "mbsft-$name"
+    else
+        tmux attach-session -t "mbsft-$name"
+    fi
+
     clear
 }
 
