@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="2.8"
+VERSION="2.9"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -432,6 +432,17 @@ run_install_deps() {
     echo "=== Активация termux-services ==="
     source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null || true
 
+    # Запускаем runsvdir если не запущен
+    if ! pgrep -x runsvdir >/dev/null; then
+        echo "Запуск runsvdir..."
+        mkdir -p "$PREFIX/var/service"
+        nohup runsvdir "$PREFIX/var/service" >/dev/null 2>&1 &
+        sleep 2
+        echo "✓ runsvdir запущен"
+    else
+        echo "✓ runsvdir уже работает"
+    fi
+
     install_java
     echo ""
     echo "=== Установка MBSFT в систему ==="
@@ -728,9 +739,26 @@ exec svlogd -tt ./main
 EOFLOG
     chmod +x "$service_dir/log/run"
 
-    # Запускаем сервис
-    sleep 1
-    sv up "mbsft-$name-watchdog" 2>/dev/null || true
+    # Проверяем что runsvdir запущен
+    if ! pgrep -x runsvdir >/dev/null; then
+        echo "⚠️  runsvdir не запущен. Запускаю..."
+        mkdir -p "$PREFIX/var/service"
+        nohup runsvdir "$PREFIX/var/service" >/dev/null 2>&1 &
+        sleep 2
+    fi
+
+    # Ждем пока сервис подхватится runsvdir (обычно до 5 секунд)
+    echo "Ожидание запуска сервиса..."
+    sleep 3
+
+    # Проверяем статус
+    if sv status "mbsft-$name-watchdog" 2>/dev/null | grep -q "run"; then
+        echo "✓ Сервис watchdog успешно запущен"
+    else
+        # Пытаемся запустить вручную
+        sv up "mbsft-$name-watchdog" 2>/dev/null
+        sleep 1
+    fi
 }
 
 remove_watchdog_service() {
@@ -807,9 +835,26 @@ exec svlogd -tt ./main
 EOFLOG
     chmod +x "$service_dir/log/run"
 
-    # Запускаем сервис
-    sleep 1
-    sv up "mbsft-$name-autosave" 2>/dev/null || true
+    # Проверяем что runsvdir запущен
+    if ! pgrep -x runsvdir >/dev/null; then
+        echo "⚠️  runsvdir не запущен. Запускаю..."
+        mkdir -p "$PREFIX/var/service"
+        nohup runsvdir "$PREFIX/var/service" >/dev/null 2>&1 &
+        sleep 2
+    fi
+
+    # Ждем пока сервис подхватится runsvdir (обычно до 5 секунд)
+    echo "Ожидание запуска сервиса..."
+    sleep 3
+
+    # Проверяем статус
+    if sv status "mbsft-$name-autosave" 2>/dev/null | grep -q "run"; then
+        echo "✓ Сервис autosave успешно запущен"
+    else
+        # Пытаемся запустить вручную
+        sv up "mbsft-$name-autosave" 2>/dev/null
+        sleep 1
+    fi
 }
 
 remove_autosave_service() {
@@ -912,13 +957,29 @@ server_manage() {
 
         # Статусы сервисов
         local watchdog_status="выкл"
-        [ "$WATCHDOG_ENABLED" = "yes" ] && watchdog_status="вкл"
+        local watchdog_real_status=""
+        if [ "$WATCHDOG_ENABLED" = "yes" ]; then
+            watchdog_status="вкл"
+            if sv status "mbsft-$name-watchdog" 2>/dev/null | grep -q "run:"; then
+                watchdog_real_status=" ✓"
+            else
+                watchdog_real_status=" ✗"
+            fi
+        fi
 
         local autosave_status="выкл"
-        [ "$AUTOSAVE_ENABLED" = "yes" ] && autosave_status="вкл (${AUTOSAVE_INTERVAL}м)"
+        local autosave_real_status=""
+        if [ "$AUTOSAVE_ENABLED" = "yes" ]; then
+            autosave_status="вкл (${AUTOSAVE_INTERVAL}м)"
+            if sv status "mbsft-$name-autosave" 2>/dev/null | grep -q "run:"; then
+                autosave_real_status=" ✓"
+            else
+                autosave_real_status=" ✗"
+            fi
+        fi
 
         echo "=== Управление: $name [$status] :$server_port ==="
-        echo "Автоперезапуск: $watchdog_status | Автосохранение: $autosave_status"
+        echo "Автоперезапуск: $watchdog_status$watchdog_real_status | Автосохранение: $autosave_status$autosave_real_status"
 
         local menu_items=("Запустить" "Остановить" "Консоль" "Автоперезапуск" "Автосохранение" "Удалить" "Назад")
         local choice
