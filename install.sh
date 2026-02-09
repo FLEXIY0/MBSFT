@@ -434,18 +434,28 @@ step_deps() {
         show_banner
         check_deps_status
         echo "=== Меню зависимостей ==="
-        echo "1) Установить всё"
-        echo "2) Удалить зависимости"
-        echo "0) Назад"
+        echo ""
 
-        read -p "Выбор: " opt
-
-        case $opt in
-            1) run_install_deps; break ;;
-            2) run_uninstall_deps ;;
-            0|q|"") return ;;
-            *) ;;
-        esac
+        PS3="Выбор: "
+        select opt in "Установить всё" "Удалить зависимости" "Назад"; do
+            case $opt in
+                "Установить всё")
+                    run_install_deps
+                    break 2
+                    ;;
+                "Удалить зависимости")
+                    run_uninstall_deps
+                    break
+                    ;;
+                "Назад")
+                    return
+                    ;;
+                *)
+                    echo "Неверный выбор"
+                    ;;
+            esac
+            break
+        done
     done
 }
 
@@ -636,22 +646,38 @@ server_manage() {
         local status="СТОП"
         is_server_running "$name" && status="РАБОТАЕТ"
         echo "=== Управление: $name [$status] ==="
-        echo "1) Запустить"
-        echo "2) Остановить"
-        echo "3) Консоль"
-        echo "4) Удалить"
-        echo "0) Назад"
+        echo ""
 
-        read -p "Выбор: " opt
-
-        case $opt in
-            1) server_start "$name"; read -p "Enter..." r; ;;
-            2) server_stop "$name"; read -p "Enter..." r; ;;
-            3) server_console "$name"; ;;
-            4) server_delete "$name" && return ;;
-            0|q|"") return ;;
-            *) ;;
-        esac
+        PS3="Выбор: "
+        select opt in "Запустить" "Остановить" "Консоль" "Удалить" "Назад"; do
+            case $opt in
+                "Запустить")
+                    server_start "$name"
+                    read -p "Enter..." r
+                    break
+                    ;;
+                "Остановить")
+                    server_stop "$name"
+                    read -p "Enter..." r
+                    break
+                    ;;
+                "Консоль")
+                    server_console "$name"
+                    break
+                    ;;
+                "Удалить")
+                    server_delete "$name" && return
+                    break
+                    ;;
+                "Назад")
+                    return
+                    ;;
+                *)
+                    echo "Неверный выбор"
+                    ;;
+            esac
+            break
+        done
     done
 }
 
@@ -664,33 +690,25 @@ list_servers() {
         read -ra servers <<< "$(get_servers)"
         if [ ${#servers[@]} -eq 0 ]; then
             echo "Нет серверов."
-            echo -n "Нажми любую клавишу..."
-            get_key_or_esc >/dev/null
+            read -p "Нажми Enter..."
             return
-        else 
-            echo "0) Назад / ESC"
-            local i=1
-            for srv in "${servers[@]}"; do
-                echo "$i) $srv"
-                ((i++))
-            done
+        else
+            echo ""
+            local menu_items=("${servers[@]}")
+            menu_items+=("Назад")
 
-            echo -n "Выбери сервер (номер): " 
-            # Здесь get_key_or_esc не подойдет, если серверов > 9. 
-            # Но у нас пока простая реализация.
-            # Если серверов много, лучше read.
-            # Но User просил ESC. Сделаем компромисс:
-            # Для выбора сервера оставим read (чтобы вводить 10, 11...), но ESC будет работать если ввести 'q' или просто Enter.
-            # Сделаем через read -e но с таймаутом сложно.
-            # Лучше просто оставим read для выбора сервера, так как это ввод числа.
-            read -p "" idx
-            
-            if [[ "$idx" == "0" ]] || [[ "$idx" == "q" ]]; then
-                return
-            elif [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -le "${#servers[@]}" ] && [ "$idx" -gt 0 ]; then
-                local selected="${servers[$((idx-1))]}"
-                server_manage "$selected"
-            fi
+            PS3="Выбери сервер: "
+            select selected in "${menu_items[@]}"; do
+                if [[ "$selected" == "Назад" ]]; then
+                    return
+                elif [[ -n "$selected" ]]; then
+                    server_manage "$selected"
+                    break
+                else
+                    echo "Неверный выбор"
+                fi
+                break
+            done
         fi
     done
 }
@@ -708,71 +726,70 @@ step_ssh() {
         clear
         show_banner
         echo "=== SSH Управление ==="
-        echo "1) Включить SSH + Автозапуск"
-        echo "2) Добавить SSH ключ"
-        echo "3) Статус подключения"
-        echo "4) Сменить пароль"
-        echo "5) Починить SSH"
-        echo "6) DEBUG sshd"
-        echo "0) Назад"
+        echo ""
 
-        read -p "Выбор: " opt
-
-        case $opt in
-            1)
+        PS3="Выбор: "
+        select opt in "Включить SSH + Автозапуск" "Добавить SSH ключ" "Статус подключения" "Сменить пароль" "Починить SSH" "DEBUG sshd" "Назад"; do
+            case $opt in
+            "Включить SSH + Автозапуск")
                 echo "=== Настройка SSH ==="
                 export DEBIAN_FRONTEND=noninteractive
                 pkg install -y -o Dpkg::Options::="--force-confnew" openssh termux-services
                 sv-enable sshd
                 if ! pgrep sshd >/dev/null; then sshd; fi
-                
+
                 read -p "Хочешь задать пароль? (y/n): " yn
                 if [[ "$yn" == "y" ]]; then
                     passwd
                 fi
                 echo "SSH включен."
                 read -r
+                break
                 ;;
-            2)
-                
+            "Добавить SSH ключ")
                 echo "=== Добавить ключ ==="
-                echo "1) github (по нику)"
-                echo "2) manual (вставка)"
-                echo "3) reset (сброс)"
-                echo "4) Назад"
-                
-                read -p "Выбор: " kopt
-                case $kopt in
-                    1)
-                        read -p "GitHub username: " gh_user
-                        if [ -n "$gh_user" ]; then
-                            curl -fsL "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys" && echo "Ключи добавлены." || echo "Ошибка."
-                        else
-                             echo "Пустой ник."
-                        fi
-                        read -r
-                        ;;
-                    2)
-                        read -p "Вставь pub-ключ (ssh-rsa ...): " key
-                        if [[ "$key" == ssh-* ]]; then
-                            mkdir -p "$HOME/.ssh"
-                            echo "$key" >> "$HOME/.ssh/authorized_keys"
-                            echo "Добавлено."
-                        else
-                            echo "Не похоже на ключ."
-                        fi
-                        read -r
-                        ;;
-                    3)
-                        echo "" > "$HOME/.ssh/authorized_keys"
-                        echo "Ключи сброшены."
-                        read -r
-                        ;;
-                    4) ;;
-                    *) echo "Неверно"; sleep 1 ;;
-                esac
+                PS3="Выбор ключа: "
+                select kopt in "github (по нику)" "manual (вставка)" "reset (сброс)" "Назад"; do
+                    case $kopt in
+                        "github (по нику)")
+                            read -p "GitHub username: " gh_user
+                            if [ -n "$gh_user" ]; then
+                                curl -fsL "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys" && echo "Ключи добавлены." || echo "Ошибка."
+                            else
+                                 echo "Пустой ник."
+                            fi
+                            read -r
+                            break
+                            ;;
+                        "manual (вставка)")
+                            read -p "Вставь pub-ключ (ssh-rsa ...): " key
+                            if [[ "$key" == ssh-* ]]; then
+                                mkdir -p "$HOME/.ssh"
+                                echo "$key" >> "$HOME/.ssh/authorized_keys"
+                                echo "Добавлено."
+                            else
+                                echo "Не похоже на ключ."
+                            fi
+                            read -r
+                            break
+                            ;;
+                        "reset (сброс)")
+                            echo "" > "$HOME/.ssh/authorized_keys"
+                            echo "Ключи сброшены."
+                            read -r
+                            break
+                            ;;
+                        "Назад")
+                            break
+                            ;;
+                        *)
+                            echo "Неверный выбор"
+                            ;;
+                    esac
+                done
+                break
                 ;;
-            3)
+            "Статус подключения")
                 local user=$(whoami)
                 local local_ip=$(get_local_ip)
                 local ext_ip=$(get_external_ip)
@@ -781,12 +798,14 @@ step_ssh() {
                 echo "External: $ext_ip"
                 echo "Connect: ssh -p 8022 $user@$local_ip"
                 read -r
+                break
                 ;;
-            4)
+            "Сменить пароль")
                 passwd
                 read -r
+                break
                 ;;
-            5)
+            "Починить SSH")
                 echo "Ремонт..."
                 pkill sshd
                 sv-disable sshd 2>/dev/null
@@ -798,18 +817,26 @@ step_ssh() {
                 sshd
                 echo "Готово."
                 read -r
+                break
                 ;;
-            6)
+            "DEBUG sshd")
                 echo "Запускаю sshd в режиме отладки..."
                 echo "Нажми Ctrl+C для выхода."
                 pkill sshd
                 /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022
                 sshd
                 read -r
+                break
                 ;;
-            0|q|"") return ;;
-            *) ;;
-        esac
+            "Назад")
+                return
+                ;;
+            *)
+                echo "Неверный выбор"
+                ;;
+            esac
+            break
+        done
     done
 }
 
@@ -940,26 +967,43 @@ main_loop() {
         read -ra servers <<< "$(get_servers)"
         local srv_count=${#servers[@]}
 
-        echo "1) Установить зависимости"
-        echo "2) Создать сервер"
-        echo "3) Мои серверы ($srv_count)"
-        echo "4) Дашборд"
-        echo "5) SSH"
-        echo "6) Удалить всё"
-        echo "0) Выход"
-
-        read -p "Выбор: " choice
-
-        case $choice in
-            1) step_deps ;;
-            2) create_server ;;
-            3) list_servers ;;
-            4) dashboard ;;
-            5) step_ssh ;;
-            6) uninstall_all ;;
-            0|q|"") exit 0 ;;
-            *) ;;
-        esac
+        echo ""
+        PS3="Выбор: "
+        select choice in "Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Удалить всё" "Выход"; do
+            case $choice in
+                "Установить зависимости")
+                    step_deps
+                    break
+                    ;;
+                "Создать сервер")
+                    create_server
+                    break
+                    ;;
+                "Мои серверы ($srv_count)")
+                    list_servers
+                    break
+                    ;;
+                "Дашборд")
+                    dashboard
+                    break
+                    ;;
+                "SSH")
+                    step_ssh
+                    break
+                    ;;
+                "Удалить всё")
+                    uninstall_all
+                    break
+                    ;;
+                "Выход")
+                    exit 0
+                    ;;
+                *)
+                    echo "Неверный выбор"
+                    ;;
+            esac
+            break
+        done
     done
 }
 
