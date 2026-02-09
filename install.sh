@@ -379,17 +379,42 @@ run_install_deps() {
     read -r
 }
 
+run_uninstall_deps() {
+    clear
+    echo "=== Удаление зависимостей ==="
+    echo "ВНИМАНИЕ! Будут удалены:"
+    echo " - Java (Ubuntu/proot-distro и все данные внутри)"
+    echo " - Пакеты: wget, tmux, openssh, termux-services, iproute2, net-tools"
+    echo ""
+    echo "Если вы подключены по SSH — соединение разорвется!"
+    read -p "Точно продолжить? (y/n): " yn
+    if [[ "$yn" != "y" ]]; then return; fi
+
+    echo "Удаление Ubuntu..."
+    if command -v proot-distro &>/dev/null; then
+        proot-distro remove ubuntu 2>/dev/null
+    fi
+    
+    echo "Удаление пакетов..."
+    pkg uninstall -y proot-distro wget tmux termux-services openssh iproute2 net-tools
+    
+    echo "Готово."
+    read -r
+}
+
 step_deps() {
     while true; do
         clear
         check_deps_status
         echo "=== Меню зависимостей ==="
         echo "1) Установить всё"
-        echo "2) Назад"
+        echo "2) Удалить зависимости"
+        echo "3) Назад"
         read -p "Выбор: " opt
         case $opt in
             1) run_install_deps; break ;;
-            2) return ;;
+            2) run_uninstall_deps ;;
+            3) return ;;
             *) echo "Неверный выбор"; sleep 1 ;;
         esac
     done
