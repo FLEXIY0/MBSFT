@@ -1052,7 +1052,7 @@ server_console() {
     echo ""
     echo "Подключение через 2 сек..."
     sleep 2
-    tmux attach-session -t "mbsft-$name" </dev/tty >/dev/tty 2>&1
+    tmux attach-session -t "mbsft-$name"
 
     # После выхода из консоли
     clear
