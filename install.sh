@@ -1131,9 +1131,15 @@ self_update() {
         echo "Проверка обновлений..."
     fi
 
-    # Скачиваем скрипт во временную переменную (с анти-кеш параметром)
+    # Скачиваем скрипт во временную переменную (с усиленным обходом кэша)
     local remote_content
-    remote_content=$(curl -sL -H 'Cache-Control: no-cache' --max-time 3 "${UPDATE_URL}?v=$(date +%s)")
+    remote_content=$(curl -sL \
+        -H 'Cache-Control: no-store, no-cache, must-revalidate' \
+        -H 'Pragma: no-cache' \
+        -H 'Expires: 0' \
+        --no-keepalive \
+        --max-time 10 \
+        "${UPDATE_URL}?nocache=$(date +%s)_$$_${RANDOM}")
 
     if [ -z "$remote_content" ]; then
         if [ "$manual" = "yes" ]; then
