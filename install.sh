@@ -2,13 +2,11 @@
 
 # ============================================
 # MBSFT — Minecraft Beta Server For Termux
-# Мульти-сервер менеджер (dialog UI)
+# CLI Version (No dialog dependency)
 # ============================================
 
 # =====================
 # Fix: curl | bash
-# Если stdin — не терминал (пайп), сохраняем скрипт
-# во временный файл и перезапускаем из файла
 # =====================
 if [ ! -t 0 ]; then
     TMPSCRIPT=$(mktemp "$HOME/.mbsft_install_XXXXXX.sh")
@@ -19,27 +17,25 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="2.3"
+VERSION="2.4-cli"
 # Java: будет найдена динамически
 JAVA_BIN=""
+_JAVA_CHECKED=""
+_CACHED_JVER=""
 
 # =====================
 # Поиск Java
 # =====================
 find_java() {
-    # Кэширование: если уже нашли, не проверяем снова
     if [ -n "$JAVA_BIN" ] && [ "$_JAVA_CHECKED" == "true" ]; then
         return 0
     fi
     
-    # Сброс кэша версии
     _CACHED_JVER=""
 
     # 1. Проверяем Java 8 внутри proot-distro (Ubuntu)
     if command -v proot-distro &>/dev/null; then
-        # Простая проверка: если java запускается и выдает версию
         if proot-distro login ubuntu -- java -version &>/dev/null; then
-             # Дополнительно проверим, что это версия 1.8
              if proot-distro login ubuntu -- java -version 2>&1 | grep -q 'version "1\.8'; then
                  JAVA_BIN="proot-distro (ubuntu/java8)"
                  _JAVA_CHECKED="true"
@@ -48,8 +44,7 @@ find_java() {
         fi
     fi
 
-    # 2. Проверяем нативную Java 8 (Hax4us/Package)
-    # Если Proot не найден или там нет Java, ищем локально
+    # 2. Проверяем нативную Java 8
     local paths=(
         "$PREFIX/share/jdk8/bin/java"
         "/data/data/com.termux/files/usr/lib/jvm/java-8-openjdk/bin/java"
@@ -68,97 +63,14 @@ find_java() {
         fi
     done
 
-    _JAVA_CHECKED="true" # Проверили, но не нашли
+    _JAVA_CHECKED="true"
     JAVA_BIN=""
     return 1
 }
 
-# =====================
-# Bootstrap: dialog
-# =====================
-
-# Починка зависшего dpkg (если есть проблема с openssl.cnf или другими конфигами)
-fix_dpkg() {
-    if dpkg --configure -a 2>&1 | grep -q "end of file on stdin"; then
-        echo "[MBSFT] Обнаружена проблема с dpkg, исправляю..."
-        export DEBIAN_FRONTEND=noninteractive
-        export APT_LISTCHANGES_FRONTEND=none
-        dpkg --configure -a --force-confnew 2>/dev/null || true
-    fi
-}
-
-if ! command -v dialog &>/dev/null; then
-    echo "[MBSFT] Устанавливаю dialog..."
-    fix_dpkg
-    pkg install -y -o Dpkg::Options::="--force-confnew" dialog 2>/dev/null || {
-        apt update -y -o Dpkg::Options::="--force-confnew" 2>/dev/null && apt install -y -o Dpkg::Options::="--force-confnew" dialog 2>/dev/null
-    }
-fi
-
-if ! command -v dialog &>/dev/null; then
-    echo "Ошибка: не удалось установить dialog"
-    exit 1
-fi
-
-# =====================
-# Тема dialog: чёрный фон, оранжевые акценты
-# =====================
-setup_dialog_theme() {
-    local rc="$HOME/.mbsft_dialogrc"
-    cat > "$rc" << 'THEOF'
-# MBSFT dialog theme — black + orange borders
-aspect = 0
-separate_widget = ""
-tab_len = 0
-visit_items = ON
-use_shadow = OFF
-use_colors = ON
-screen_color = (WHITE,BLACK,OFF)
-shadow_color = (BLACK,BLACK,OFF)
-dialog_color = (WHITE,BLACK,OFF)
-title_color = (WHITE,BLACK,ON)
-border_color = (RED,BLACK,ON)
-border2_color = (RED,BLACK,ON)
-button_active_color = (BLACK,WHITE,ON)
-button_inactive_color = (WHITE,BLACK,OFF)
-button_key_active_color = (BLACK,WHITE,ON)
-button_key_inactive_color = (WHITE,BLACK,OFF)
-button_label_active_color = (BLACK,WHITE,ON)
-button_label_inactive_color = (WHITE,BLACK,OFF)
-inputbox_color = (WHITE,BLACK,OFF)
-inputbox_border_color = (RED,BLACK,ON)
-inputbox_border2_color = (RED,BLACK,ON)
-searchbox_color = (WHITE,BLACK,OFF)
-searchbox_title_color = (WHITE,BLACK,ON)
-searchbox_border_color = (RED,BLACK,ON)
-searchbox_border2_color = (RED,BLACK,ON)
-position_indicator_color = (RED,BLACK,ON)
-menubox_color = (WHITE,BLACK,OFF)
-menubox_border_color = (RED,BLACK,ON)
-menubox_border2_color = (RED,BLACK,ON)
-item_color = (WHITE,BLACK,OFF)
-item_selected_color = (BLACK,WHITE,ON)
-tag_color = (WHITE,BLACK,OFF)
-tag_selected_color = (BLACK,WHITE,ON)
-tag_key_color = (WHITE,BLACK,OFF)
-tag_key_selected_color = (BLACK,WHITE,ON)
-check_color = (WHITE,BLACK,OFF)
-check_selected_color = (BLACK,WHITE,ON)
-uarrow_color = (RED,BLACK,ON)
-darrow_color = (RED,BLACK,ON)
-itemhelp_color = (WHITE,BLACK,OFF)
-form_active_text_color = (WHITE,BLACK,ON)
-form_text_color = (WHITE,BLACK,OFF)
-form_item_readonly_color = (WHITE,BLACK,OFF)
-gauge_color = (RED,BLACK,ON)
-THEOF
-    export DIALOGRC="$rc"
-}
-setup_dialog_theme
-
 # Проверка Termux
 if [ ! -d "/data/data/com.termux" ]; then
-    dialog --title "Ошибка" --msgbox "Этот скрипт только для Termux!" 6 40
+    echo "Ошибка: Этот скрипт только для Termux!"
     exit 1
 fi
 
@@ -171,24 +83,19 @@ find_java
 
 TITLE="MBSFT v${VERSION}"
 
-# Локальный IP (для подключения по Wi-Fi)
 get_local_ip() {
     [ -n "$CACHED_LOCAL_IP" ] && echo "$CACHED_LOCAL_IP" && return
     local ip=""
-    # 1. ip route — самый надёжный способ в Linux/Termux
     if [ -z "$ip" ] && command -v ip &>/dev/null; then
         ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
     fi
-    # 2. ifconfig — проверяем все интерфейсы
     if [ -z "$ip" ] && command -v ifconfig &>/dev/null; then
         ip=$(ifconfig 2>/dev/null | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}' | sed 's/addr://')
     fi
-    # 3. termux-wifi-connectioninfo (нужен termux-api)
     if [ -z "$ip" ] && command -v termux-wifi-connectioninfo &>/dev/null; then
         ip=$(termux-wifi-connectioninfo 2>/dev/null | grep '"ip"' | cut -d'"' -f4)
         [ "$ip" = "0.0.0.0" ] && ip=""
     fi
-    # 4. hostname -I
     if [ -z "$ip" ] && command -v hostname &>/dev/null; then
         ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
@@ -196,7 +103,6 @@ get_local_ip() {
     echo "$CACHED_LOCAL_IP"
 }
 
-# Внешний IP (через интернет)
 get_external_ip() {
     [ -n "$CACHED_EXT_IP" ] && echo "$CACHED_EXT_IP" && return
     local ip=""
@@ -205,7 +111,6 @@ get_external_ip() {
     elif command -v wget &>/dev/null; then
         ip=$(wget -qO- --timeout=5 ifconfig.me 2>/dev/null)
     fi
-    # Проверяем что результат похож на IP
     if echo "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
         CACHED_EXT_IP="$ip"
         echo "$ip"
@@ -213,11 +118,6 @@ get_external_ip() {
         CACHED_EXT_IP="не определён"
         echo "не определён"
     fi
-}
-
-# Основная функция — локальный IP (для Minecraft / SSH)
-get_ip() {
-    get_local_ip
 }
 
 deps_installed() {
@@ -228,7 +128,6 @@ validate_name() {
     echo "$1" | grep -qE '^[a-zA-Z0-9_-]+$'
 }
 
-# Конфиг сервера
 write_server_conf() {
     local dir="$1" name="$2" ram="$3" port="$4" core="$5"
     cat > "$dir/.mbsft.conf" << EOF
@@ -263,7 +162,6 @@ get_servers() {
 
 is_server_running() {
     local name="$1"
-    # Проверка наличия сессии tmux
     tmux has-session -t "mbsft-$name" 2>/dev/null
 }
 
@@ -289,7 +187,6 @@ next_free_port() {
     echo "$port"
 }
 
-# Патч конфигов сервера
 patch_server() {
     local sv_dir="$1" port="$2"
     if [ -f "$sv_dir/eula.txt" ]; then
@@ -303,34 +200,24 @@ patch_server() {
     fi
 }
 
-# Генерация start.sh (использует найденную java)
-# Генерация start.sh (использует proot-distro)
-# Генерация start.sh (использует proot-distro или нативную java)
 make_start_sh() {
     local sv_dir="$1" name="$2" ram="$3" port="$4" core="$5"
-    
-    # Флаги запуска в зависимости от ядра
     local args="nogui"
     if [ "$core" == "foxloader" ]; then
         args="--server"
     fi
 
-    # Убедимся, что JAVA_BIN актуальна
     find_java
 
     if [[ "$JAVA_BIN" == *"proot-distro"* ]]; then
-        # Режим Proot:
         cat > "$sv_dir/start.sh" << EOF
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$sv_dir"
 echo "[$name] Запуск через Proot Ubuntu (Java 8)..."
 echo "RAM: $ram, Port: $port, Core: $core"
-
-# Запуск Java внутри Ubuntu
 proot-distro login ubuntu --bind "$sv_dir:/server" -- java -Xmx$ram -Xms$ram -jar /server/server.jar $args
 EOF
     else
-        # Режим Native:
         cat > "$sv_dir/start.sh" << EOF
 #!/data/data/com.termux/files/usr/bin/bash
 cd "$sv_dir"
@@ -342,36 +229,27 @@ EOF
     chmod +x "$sv_dir/start.sh"
 }
 
-# =====================
-# Выбор быстрого зеркала
 optimize_mirrors() {
     echo "=== Поиск быстрого зеркала ==="
-    
     local mirrors=(
         "https://grimler.se/termux/termux-main"
         "https://mirror.mwt.me/termux/main"
         "https://termux.librehat.com/apt/termux-main"
         "https://packages.termux.dev/apt/termux-main"
     )
-    
     local best_mirror=""
     local best_time=10000
-    
-    # Нужен curl для теста
+
     if ! command -v curl &>/dev/null; then
         pkg install -y -o Dpkg::Options::="--force-confnew" curl &>/dev/null || return 1
     fi
 
     echo "Тест скорости (время отклика):"
-    
     for url in "${mirrors[@]}"; do
-        # Замеряем время скачивания Release файла (head request или маленький файл)
         local time
         time=$(curl -o /dev/null -s -w "%{time_total}" --connect-timeout 2 --max-time 3 "$url/dists/stable/Release")
-
         if [ -n "$time" ] && [ "$time" != "0.000000" ]; then
             echo "  $url -> ${time}s"
-            # Сравниваем float через awk
             local is_faster
             is_faster=$(awk -v t="$time" -v b="$best_time" 'BEGIN {print (t < b)}')
             if [ "$is_faster" -eq 1 ]; then
@@ -387,12 +265,8 @@ optimize_mirrors() {
         echo ""
         echo "Лучшее зеркало: $best_mirror"
         echo "Применяю..."
-        
-        # Бэкап
         cp "$PREFIX/etc/apt/sources.list" "$PREFIX/etc/apt/sources.list.bak"
-        # Запись
         echo "deb $best_mirror stable main" > "$PREFIX/etc/apt/sources.list"
-
         echo "Обновление списков..."
         pkg update -y -o Dpkg::Options::="--force-confnew"
     else
@@ -401,373 +275,181 @@ optimize_mirrors() {
     echo ""
 }
 
-# Генерация start.sh (использует proot-distro)
-
 install_java() {
     echo ""
     echo "=== Установка Java 8 (Proot-Distro/Ubuntu) ==="
     echo "Это самый надежный способ запуска Java 8 на Android."
-    echo "Будет установлена Ubuntu (~80MB) и OpenJDK 8 внутри неё."
-    echo ""
-
-    # Автоматические ответы для dpkg
     export DEBIAN_FRONTEND=noninteractive
     export APT_LISTCHANGES_FRONTEND=none
 
-    # Оптимизация зеркал ПЕРЕД установкой
     echo "[0/4] Проверка скорости зеркал..."
     if ! command -v proot-distro &>/dev/null; then
-        # Если proot-distro нет - ищем быстрое зеркало
         optimize_mirrors
     fi
 
     # 1. Установка proot-distro
     if ! command -v proot-distro &>/dev/null; then
         echo "[1/4] Установка proot-distro..."
-
-        # Установка с оптимизированного зеркала
         pkg install -y -o Dpkg::Options::="--force-confnew" proot-distro
-
         if [ $? -ne 0 ]; then
-            echo ""
             echo "ОШИБКА: Не удалось установить proot-distro!"
-            echo ""
-            echo "РЕШЕНИЕ:"
             echo "1. Выполни: termux-change-repo"
-            echo "2. Выбери самое быстрое зеркало (попробуй Grimler или BFSU)"
-            echo "3. Перезапусти установку MBSFT"
+            echo "2. Выбери самое быстрое зеркало"
             return 1
         fi
     fi
 
-    # 2. Установка Ubuntu с альтернативными источниками
+    # 2. Установка Ubuntu
     if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
-        echo "[2/4] Скачивание и установка Ubuntu (~55MB)..."
-        echo ""
-
-        # Альтернативные источники Ubuntu rootfs (быстрые CDN)
-        # questing = Ubuntu 25.10 (текущая версия в proot-distro v4.30.1)
+        echo "[2/4] Скачивание и установка Ubuntu..."
         local alt_urls=(
             "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
             "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
             "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
         )
-
         local cache_dir="$PREFIX/var/lib/proot-distro/dlcache"
         local tarball="$cache_dir/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
-
         mkdir -p "$cache_dir"
 
-        # Пробуем альтернативные источники (с прогресс-баром)
         local downloaded=false
         for url in "${alt_urls[@]}"; do
-            local mirror_name=$(echo $url | cut -d'/' -f3 | cut -d':' -f1)
-            echo "Попытка загрузки с: $mirror_name"
-
-            # Используем wget с таймаутом и прогресс-баром
-            if timeout 120 wget --show-progress --progress=bar:force -O "$tarball" "$url" 2>&1; then
-                # Проверяем размер файла (Ubuntu rootfs должен быть > 50MB)
-                local size=$(stat -c%s "$tarball" 2>/dev/null || stat -f%z "$tarball" 2>/dev/null || echo 0)
-                if [ "$size" -gt 50000000 ]; then
-                    echo "✓ Загружено успешно ($(($size / 1024 / 1024))MB)"
-                    downloaded=true
-                    break
-                else
-                    echo "✗ Файл поврежден или неполный, пробую следующий..."
-                    rm -f "$tarball"
-                fi
-            else
-                echo "✗ Тайм-аут или ошибка, пробую следующий..."
-                rm -f "$tarball"
+            echo "Загрузка: $url"
+            if timeout 120 wget -q --show-progress --progress=bar:force -O "$tarball" "$url"; then
+                downloaded=true
+                break
             fi
         done
 
-        # Если скачали вручную - запускаем proot-distro install (оно найдет файл в кеше)
         if [ "$downloaded" = true ]; then
             echo "Установка Ubuntu из кеша..."
             proot-distro install ubuntu
-
-            if [ $? -ne 0 ]; then
-                echo "ОШИБКА установки. Пробую стандартный метод..."
-                rm -f "$tarball"
-                downloaded=false
-            fi
-        fi
-
-        # Если альтернативы не сработали - используем стандартный метод
-        if [ "$downloaded" = false ]; then
-            echo "Использую стандартное зеркало proot-distro..."
-            echo "ВНИМАНИЕ: Если загрузка медленная (< 100 KB/s):"
-            echo "  1. Нажми Ctrl+C"
-            echo "  2. Выполни: termux-change-repo"
-            echo "  3. Выбери быстрое зеркало (Grimler/BFSU)"
-            echo ""
-
+        else
+            echo "Стандартная установка Ubuntu..."
             proot-distro install ubuntu
-
-            if [ $? -ne 0 ]; then
-                echo ""
-                echo "ОШИБКА: Не удалось установить Ubuntu."
-                echo "Попробуй сменить зеркало: termux-change-repo"
-                return 1
-            fi
         fi
-
-        # Проверяем успешность установки
-        if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
-            echo "ОШИБКА: Ubuntu не установлена корректно"
-            return 1
-        fi
-
-        echo "✓ Ubuntu установлена!"
     else
         echo "[2/4] Ubuntu уже установлена."
     fi
 
-    # 3. Обновление пакетов внутри Ubuntu
-    echo "[3/4] Обновление пакетов внутри Ubuntu (apt update)..."
+    echo "[3/4] Обновление пакетов внутри Ubuntu..."
     proot-distro login ubuntu -- apt update -y
 
-    # 4. Установка Java 8
     echo "[4/4] Установка OpenJDK 8..."
     proot-distro login ubuntu -- apt install -y openjdk-8-jre-headless
 
-    echo ""
-    echo "Проверка..."
     if find_java; then
-        echo "УСПЕХ: Java 8 установлена в Ubuntu!"
+        echo "УСПЕХ: Java 8 установлена!"
         return 0
     else
-        echo "ОШИБКА: Java не найдена внутри Ubuntu."
+        echo "ОШИБКА: Java не найдена."
         return 1
     fi
 }
 
 check_deps_status() {
-    local result=""
-    local all_ok=true
-
-    # Java
+    echo "=== Статус зависимостей ==="
     if find_java; then
-        if [ -z "$_CACHED_JVER" ]; then
-            if [[ "$JAVA_BIN" == *"proot"* ]]; then
-                # Очистка вывода от ANSI кодов и Warning'ов
-                _CACHED_JVER=$(proot-distro login ubuntu -- java -version 2>&1 | grep "version" | head -1 | sed 's/\x1b\[[0-9;]*m//g' | sed 's/Warning.*//g')
-            else
-                _CACHED_JVER=$("$JAVA_BIN" -version 2>&1 | head -1)
-            fi
-        fi
-        result+="Java:              OK  ($_CACHED_JVER)\n"
+        echo "Java:       OK ($JAVA_BIN)"
     else
-        result+="Java:              НЕТ\n"
-        all_ok=false
+        echo "Java:       НЕТ"
     fi
-
-    # tmux
-    if command -v tmux &>/dev/null; then
-        result+="tmux:              OK\n"
-    else
-        result+="tmux:              НЕТ\n"
-        all_ok=false
-    fi
-
-    # wget
-    if command -v wget &>/dev/null; then
-        result+="wget:           OK\n"
-    else
-        result+="wget:           НЕТ\n"
-        all_ok=false
-    fi
-
-    # openssh
-    if command -v sshd &>/dev/null; then
-        result+="openssh:        OK\n"
-    else
-        result+="openssh:        НЕТ\n"
-    fi
-
-    # iproute2
-    if command -v ip &>/dev/null; then
-        result+="iproute2 (ip):  OK\n"
-    else
-        result+="iproute2 (ip):  НЕТ\n"
-    fi
-
-    # net-tools
-    if command -v ifconfig &>/dev/null; then
-        result+="net-tools:      OK\n"
-    else
-        result+="net-tools:      НЕТ\n"
-    fi
-
-    # IP check
-    local lip eip
-    lip=$(get_local_ip)
-    eip=$(get_external_ip)
-    result+="\nЛокальный IP:   $lip\n"
-    result+="Внешний IP:     $eip\n"
-
-    echo -e "$result"
-    $all_ok
+    command -v tmux &>/dev/null && echo "tmux:       OK" || echo "tmux:       НЕТ"
+    command -v wget &>/dev/null && echo "wget:       OK" || echo "wget:       НЕТ"
+    command -v sshd &>/dev/null && echo "openssh:    OK" || echo "openssh:    НЕТ"
+    echo ""
 }
 
 run_install_deps() {
     clear
     echo "=== Установка зависимостей ==="
-    echo ""
-
-    # Автоматические ответы для dpkg (решает проблему с openssl.cnf и другими конфигами)
     export DEBIAN_FRONTEND=noninteractive
-    export APT_LISTCHANGES_FRONTEND=none
-
-    # Исправляем зависший dpkg если есть
-    echo "Проверка системы пакетов..."
-    fix_dpkg
-
     pkg update -y && pkg upgrade -y -o Dpkg::Options::="--force-confnew"
-
-    echo ""
-    echo "--- Основные пакеты ---"
-    pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh
-
-    echo ""
-    echo "--- Сетевые утилиты ---"
-    pkg install -y -o Dpkg::Options::="--force-confnew" iproute2
-    pkg install -y -o Dpkg::Options::="--force-confnew" net-tools
-    if ! command -v ifconfig &>/dev/null; then
-        echo "ВНИМАНИЕ: net-tools не установился, пробую ещё раз..."
-        apt install -y -o Dpkg::Options::="--force-confnew" net-tools
-    fi
-
-    echo ""
+    pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh iproute2 net-tools
     install_java
-    local java_ok=$?
-
-    echo ""
-    echo "=== Результат ==="
-    command -v ip &>/dev/null       && echo "  ip:        OK" || echo "  ip:        НЕТ"
-    command -v ifconfig &>/dev/null && echo "  ifconfig:  OK" || echo "  ifconfig:  НЕТ"
-    command -v tmux &>/dev/null     && echo "  tmux:      OK" || echo "  tmux:      НЕТ"
-    command -v wget &>/dev/null     && echo "  wget:      OK" || echo "  wget:      НЕТ"
-    [ $java_ok -eq 0 ]             && echo "  java:      OK ($JAVA_BIN)" || echo "  java:      НЕТ"
     echo ""
     echo "Нажми Enter..."
-    read -r </dev/tty
+    read -r
 }
 
 step_deps() {
     while true; do
-        local status_text
-        status_text=$(check_deps_status)
-        local all_ok=$?
-
-        local choice
-        choice=$(dialog --title "Зависимости" \
-            --menu "$status_text" 22 58 4 \
-            "install" "Установить всё" \
-            "check"   "Повторная проверка" \
-            "---"     "─────────────────────" \
-            "back"    "Назад" \
-            3>&1 1>&2 2>&3)
-
-        case $? in
-            1|255) return ;;
-        esac
-
-        case $choice in
-            install) run_install_deps ;;
-            check)   continue ;;  # просто обновит статус при следующей итерации
-            back)    return ;;
-        esac
+        clear
+        check_deps_status
+        echo "Меню зависимостей:"
+        select opt in "Установить всё" "Назад"; do
+            case $opt in
+                "Установить всё") run_install_deps; break ;;
+                "Назад") return ;;
+                *) echo "Неверный выбор";;
+            esac
+        done
     done
 }
 
-# =====================
-# 2. Создание сервера
-# =====================
-
 create_server() {
     if ! deps_installed; then
-        dialog --title "$TITLE" --msgbox "Сначала установи зависимости!" 6 44
+        echo "Сначала установи зависимости!"
+        read -r
         return
     fi
-
-    local name
-    name=$(dialog --title "Новый сервер" --inputbox "Имя сервера (англ, без пробелов):" 8 50 "" 3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
+    
+    echo "=== Новый сервер ==="
+    read -p "Имя сервера (англ, без пробелов): " name
     if [ -z "$name" ] || ! validate_name "$name"; then
-        dialog --title "Ошибка" --msgbox "Имя может содержать только буквы, цифры, _ и -" 6 54
+        echo "Ошибка: Имя может содержать только буквы, цифры, _ и -"
+        read -r
         return
     fi
 
     local sv_dir="$BASE_DIR/$name"
     if [ -d "$sv_dir" ] && [ -f "$sv_dir/server.jar" ]; then
-        dialog --title "Ошибка" --msgbox "Сервер '$name' уже существует!" 6 44
+        echo "Ошибка: Сервер '$name' уже существует!"
+        read -r
         return
     fi
 
-    local ram
-    ram=$(dialog --title "Новый сервер: $name" --menu "Сколько RAM выделить?" 12 44 4 \
-        "512M" "Для слабых устройств" \
-        "1G"   "Рекомендуется" \
-        "2G"   "Для мощных устройств" \
-        "4G"   "Максимум" \
-        3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
+    echo "Сколько RAM выделить?"
+    local ram="1G"
+    select r in "512M" "1G" "2G" "4G"; do
+        if [ -n "$r" ]; then
+            ram=$r
+            break
+        fi
+    done
 
-    local default_port
-    default_port=$(next_free_port)
-    local port
-    port=$(dialog --title "Новый сервер: $name" --inputbox "Порт сервера:" 8 40 "$default_port" 3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
+    local default_port=$(next_free_port)
+    read -p "Порт сервера [$default_port]: " port
+    port=${port:-$default_port}
 
+    echo "Ядро сервера:"
     local core_choice
-    core_choice=$(dialog --title "Новый сервер: $name" --menu "Ядро сервера:" 13 54 5 \
-        "poseidon"  "Project Poseidon (Beta 1.7.3)" \
-        "reindev"   "Reindev 2.9_03 (Modded)" \
-        "foxloader" "FoxLoader 1.2-alpha39 (Modding)" \
-        "custom"    "Закину server.jar вручную" \
-        3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
-
+    local poseidon_url="https://github.com/FLEXIY0/MBSFT/releases/download/servers/project-poseidon-1.1.8.jar"
+    select c in "poseidon" "reindev" "foxloader" "custom"; do
+        if [ -n "$c" ]; then
+            core_choice=$c
+            break
+        fi
+    done
+    
     mkdir -p "$sv_dir"
 
     if [ "$core_choice" == "poseidon" ]; then
-        clear
-        echo "=== Скачиваю Project Poseidon ==="
-        if ! wget -O "$sv_dir/server.jar" "$POSEIDON_URL"; then
-            rm -f "$sv_dir/server.jar"
-            dialog --title "Ошибка" --msgbox "Не удалось скачать! Проверь интернет." 6 50
-            return
-        fi
+        echo "Скачиваю Project Poseidon..."
+        wget -O "$sv_dir/server.jar" "$poseidon_url" || { echo "Ошибка загрузки"; return; }
     elif [ "$core_choice" == "reindev" ]; then
-        clear
-        echo "=== Скачиваю Reindev 2.9_03 ==="
-        # Ссылка на релиз (тег servers)
-        REINDEV_URL="https://github.com/FLEXIY0/MBSFT/releases/download/servers/reindev-server-2.9_03.jar"
-        if ! wget -O "$sv_dir/server.jar" "$REINDEV_URL"; then
-            rm -f "$sv_dir/server.jar"
-            dialog --title "Ошибка" --msgbox "Не удалось скачать Reindev!\n\nУбедись, что файл есть в релизе 'servers'." 8 50
-            return
-        fi
+        echo "Скачиваю Reindev..."
+        wget -O "$sv_dir/server.jar" "https://github.com/FLEXIY0/MBSFT/releases/download/servers/reindev-server-2.9_03.jar" || { echo "Ошибка загрузки"; return; }
     elif [ "$core_choice" == "foxloader" ]; then
-        clear
-        echo "=== Скачиваю FoxLoader ==="
-        FOX_URL="https://github.com/Fox2Code/FoxLoader/releases/download/2.0-alpha39/foxloader-2.0-alpha39-server.jar"
-        if ! wget -O "$sv_dir/server.jar" "$FOX_URL"; then
-            rm -f "$sv_dir/server.jar"
-            dialog --title "Ошибка" --msgbox "Не удалось скачать FoxLoader!" 6 50
-            return
-        fi
-    else
-        dialog --title "$name" --msgbox "Закинь server.jar в папку:\n\n$sv_dir/\n\nЗатем зайди в управление сервером." 10 54
+        echo "Скачиваю FoxLoader..."
+        wget -O "$sv_dir/server.jar" "https://github.com/Fox2Code/FoxLoader/releases/download/2.0-alpha39/foxloader-2.0-alpha39-server.jar" || { echo "Ошибка загрузки"; return; }
+    elif [ "$core_choice" == "custom" ]; then
+        echo "Закинь server.jar в папку $sv_dir/ и нажми Enter"
+        read -r
     fi
 
-    # Передаем тип ядра для правильной генерации start.sh (аргументы запуска)
     make_start_sh "$sv_dir" "$name" "$ram" "$port" "$core_choice"
     write_server_conf "$sv_dir" "$name" "$ram" "$port" "$core_choice"
 
-    # Предварительно создаем server.properties, чтобы сервер сразу встал на нужный порт
     cat > "$sv_dir/server.properties" << EOF
 #Minecraft server properties
 online-mode=false
@@ -784,169 +466,12 @@ enable-rcon=false
 motd=A Minecraft Server
 EOF
 
-    if [ -f "$sv_dir/server.jar" ]; then
-        dialog --title "$name" --yesno "Сервер создан!\n\nЗапустить сейчас?\n(Сервер запустится в фоне, откроется консоль)" 10 54
-        if [ $? -eq 0 ]; then
-            server_start "$name"
-            server_console "$name"
-        fi
+    echo "Сервер создан!"
+    read -p "Запустить сейчас? (y/n): " yn
+    if [[ "$yn" == "y" ]]; then
+        server_start "$name"
+        server_console "$name"
     fi
-
-    dialog --title "$TITLE" --msgbox "Сервер '$name' создан!\n\nПапка: $sv_dir\nRAM: $ram\nПорт: $port\n\nУправляй через «Мои серверы»" 12 50
-}
-
-# =====================
-# 3. Быстрое создание
-# =====================
-
-quick_create() {
-    if ! deps_installed; then
-        dialog --title "$TITLE" --yesno "Зависимости не установлены.\nУстановить сейчас?" 7 44
-        if [ $? -eq 0 ]; then
-            clear
-            echo "=== Установка зависимостей ==="
-            echo ""
-
-            # Автоматические ответы для dpkg
-            export DEBIAN_FRONTEND=noninteractive
-            export APT_LISTCHANGES_FRONTEND=none
-
-            pkg update -y -o Dpkg::Options::="--force-confnew" && pkg upgrade -y -o Dpkg::Options::="--force-confnew"
-            pkg install -y -o Dpkg::Options::="--force-confnew" tur-repo 2>/dev/null
-            pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh iproute2 net-tools
-            install_java
-            if ! find_java; then
-                echo "Java не установлена!"
-                echo "Нажми Enter..."
-                read -r </dev/tty
-                return
-            fi
-        else
-            return
-        fi
-    fi
-
-    local name
-    name=$(dialog --title "Быстрое создание" --inputbox "Имя сервера:" 8 44 "" 3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
-    if [ -z "$name" ] || ! validate_name "$name"; then
-        dialog --title "Ошибка" --msgbox "Неверное имя!" 6 30
-        return
-    fi
-
-    local sv_dir="$BASE_DIR/$name"
-    if [ -d "$sv_dir" ] && [ -f "$sv_dir/server.jar" ]; then
-        dialog --title "Ошибка" --msgbox "Сервер '$name' уже существует!" 6 44
-        return
-    fi
-
-    local port
-    port=$(next_free_port)
-
-    dialog --title "Быстрое создание" --yesno "Создать сервер:\n\nИмя:   $name\nЯдро:  Project Poseidon (Beta 1.7.3)\nRAM:   1G\nПорт:  $port" 12 44
-    [ $? -ne 0 ] && return
-
-    mkdir -p "$sv_dir"
-
-    clear
-    echo "=== Быстрое создание: $name ==="
-    echo ""
-    echo "[1/3] Скачиваю ядро..."
-    if ! wget -O "$sv_dir/server.jar" "$POSEIDON_URL"; then
-        rm -f "$sv_dir/server.jar"
-        echo "ОШИБКА загрузки!"
-        echo "Нажми Enter..."
-        read -r </dev/tty
-        return
-    fi
-
-    echo "[2/3] Настраиваю..."
-    make_start_sh "$sv_dir" "$name" "1G" "$port"
-    write_server_conf "$sv_dir" "$name" "1G" "$port" "poseidon"
-
-    echo "[3/3] Первый запуск (Ctrl+C для остановки)..."
-    echo ""
-    cd "$sv_dir" && ./start.sh || true
-    patch_server "$sv_dir" "$port"
-    echo ""
-    echo "Нажми Enter..."
-    read -r </dev/tty
-
-    dialog --title "$TITLE" --msgbox "Сервер '$name' готов!\n\nПорт: $port\nУправляй через «Мои серверы»" 9 44
-}
-
-# =====================
-# 4. Мои серверы
-# =====================
-
-list_servers_menu() {
-    while true; do
-        local servers
-        read -ra servers <<< "$(get_servers)"
-
-        if [ ${#servers[@]} -eq 0 ] || [ -z "${servers[0]}" ]; then
-            dialog --title "$TITLE" --msgbox "Серверов пока нет.\nСоздай первый!" 7 34
-            return
-        fi
-
-        local items=()
-        for srv in "${servers[@]}"; do
-            local sv_dir="$BASE_DIR/$srv"
-            read_server_conf "$sv_dir"
-            local actual_port
-            actual_port=$(get_actual_port "$sv_dir")
-            local status="СТОП"
-            is_server_running "$srv" && status="ЗАПУЩЕН"
-            items+=("$srv" "Порт:$actual_port RAM:$RAM [$status]")
-        done
-
-        local choice
-        choice=$(dialog --title "Мои серверы" --menu "Выбери сервер:" 18 56 10 "${items[@]}" 3>&1 1>&2 2>&3)
-        [ $? -ne 0 ] && return
-
-        server_manage_menu "$choice"
-    done
-}
-
-# =====================
-# Управление сервером
-# =====================
-
-server_manage_menu() {
-    local name="$1"
-    local sv_dir="$BASE_DIR/$name"
-
-    while true; do
-        read_server_conf "$sv_dir"
-        local actual_port
-        actual_port=$(get_actual_port "$sv_dir")
-        local status="ОСТАНОВЛЕН"
-        is_server_running "$name" && status="РАБОТАЕТ"
-
-        local choice
-        choice=$(dialog --title "[$status] $name" \
-            --menu "RAM: $RAM | Порт: $actual_port | Ядро: $CORE" 18 54 9 \
-            "start"    "Запустить" \
-            "stop"     "Остановить" \
-            "restart"  "Перезапустить" \
-            "console"  "Консоль (tmux)" \
-            "settings" "Настройки (RAM, порт)" \
-            "service"  "Создать сервис (автосохр.)" \
-            "---"      "─────────────────────" \
-            "delete"   "Удалить сервер" \
-            3>&1 1>&2 2>&3)
-        [ $? -ne 0 ] && return
-
-        case $choice in
-            start)    server_start "$name" ;;
-            stop)     server_stop "$name" ;;
-            restart)  server_stop_silent "$name"; server_start "$name" ;;
-            console)  server_console "$name" ;;
-            settings) server_settings "$name" ;;
-            service)  server_create_service "$name" ;;
-            delete)   server_delete "$name" && return ;;
-        esac
-    done
 }
 
 server_start() {
@@ -954,603 +479,285 @@ server_start() {
     local sv_dir="$BASE_DIR/$name"
     
     if is_server_running "$name"; then
-        dialog --title "$name" --msgbox "Уже запущен!" 6 30
-        return
-    fi
-
-    if [ ! -f "$sv_dir/server.jar" ]; then
-        dialog --title "$name" --msgbox "server.jar не найден!\nЗакинь в: $sv_dir/" 7 50
+        echo "Сервер уже запущен!"
+        read -r
         return
     fi
     
     cd "$sv_dir" || return
-    
-    # Запуск в новой сессии tmux в фоне (-d)
-    # Имя сессии: mbsft-$name
-    # Добавляем '; read' чтобы консоль не закрывалась при ошибке/остановке
+    # Запуск
     tmux new-session -d -s "mbsft-$name" "cd \"$sv_dir\" && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter...'; read"
+    sleep 2
     
-    sleep 2 # Даем время на запуск
-
     if is_server_running "$name"; then
-        local ip port
-        ip=$(get_local_ip)
-        port=$(get_actual_port "$sv_dir")
-        dialog --title "$name" --msgbox "Сервер запущен!\n\nПодключение: $ip:$port\nКонсоль: tmux attach-session -t mbsft-${name}" 9 50
+        echo "Сервер запущен. Порт: $(get_actual_port "$sv_dir")"
     else
-        dialog --title "$name" --msgbox "Не удалось запустить.\nПроверь логи в $sv_dir/" 7 50
+        echo "Не удалось запустить."
     fi
 }
 
 server_stop() {
     local name="$1"
     if ! is_server_running "$name"; then
-        dialog --title "$name" --msgbox "Сервер не запущен." 6 34
+        echo "Сервер не запущен."
         return
     fi
-
-    # Отправляем stop
+    
     tmux send-keys -t "mbsft-$name" "stop" C-m 2>/dev/null
     
     local tries=0
-    # Ждем завершения
     while is_server_running "$name" && [ $tries -lt 15 ]; do
         sleep 1
-        tries=$((tries + 1))
+        tries=$((tries+1))
     done
     
-    # Если завис
     if is_server_running "$name"; then
-         tmux kill-session -t "mbsft-$name" 2>/dev/null
+        tmux kill-session -t "mbsft-$name" 2>/dev/null
     fi
-
-    dialog --title "$name" --msgbox "Сервер остановлен." 6 34
-}
-
-server_stop_silent() {
-    local name="$1"
-    if is_server_running "$name"; then
-        # Отправляем команду stop в консоль сервера
-        tmux send-keys -t "mbsft-$name" "stop" C-m 2>/dev/null
-        
-        # Ждем 7 секунд, пока сервер сохранит мир и выйдет
-        local timeout=7
-        while [ $timeout -gt 0 ] && is_server_running "$name"; do
-            sleep 1
-            ((timeout--))
-        done
-        
-        # Если все еще жив - убиваем сессию
-        if is_server_running "$name"; then
-            tmux kill-session -t "mbsft-$name" 2>/dev/null
-        fi
-    fi
+    echo "Сервер остановлен."
 }
 
 server_console() {
     local name="$1"
     if ! is_server_running "$name"; then
-        dialog --title "Ошибка" --msgbox "Сервер $name не запущен!" 6 40
+        echo "Сервер не запущен!"
+        read -r
         return
     fi
-    # Сбрасываем терминал после dialog (dialog может сломать stty настройки)
-    stty sane 2>/dev/null
-    # TMUX= убирает переменную чтобы не было конфликта вложенных сессий
-    TMUX= tmux attach-session -t "mbsft-$name" </dev/tty >/dev/tty 2>&1
-    # Восстанавливаем терминал после tmux
-    stty sane 2>/dev/null
-}
-
-server_settings() {
-    local name="$1"
-    local sv_dir="$BASE_DIR/$name"
-    read_server_conf "$sv_dir"
-
-    local actual_port
-    actual_port=$(get_actual_port "$sv_dir")
-    local online="?"
-    [ -f "$sv_dir/server.properties" ] && online=$(grep "online-mode=" "$sv_dir/server.properties" 2>/dev/null | cut -d= -f2)
-
-    local new_ram
-    new_ram=$(dialog --title "Настройки: $name" --menu "RAM (сейчас: $RAM):" 12 44 4 \
-        "512M" "Для слабых устройств" \
-        "1G"   "Рекомендуется" \
-        "2G"   "Для мощных устройств" \
-        "4G"   "Максимум" \
-        3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
-
-    local new_port
-    new_port=$(dialog --title "Настройки: $name" --inputbox "Порт (сейчас: $actual_port):" 8 40 "$actual_port" 3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
-
-    local new_online=false
-    dialog --title "Настройки: $name" --yesno "Включить online-mode?\n(Сейчас: $online)\n\nДа = лицензия нужна\nНет = пираты могут заходить" 10 44
-    [ $? -eq 0 ] && new_online=true
-
-    make_start_sh "$sv_dir" "$name" "$new_ram" "$new_port"
-
-    if [ -f "$sv_dir/server.properties" ]; then
-        sed -i "s/server-port=.*/server-port=$new_port/g" "$sv_dir/server.properties"
-        sed -i "s/online-mode=.*/online-mode=$new_online/g" "$sv_dir/server.properties"
-        sed -i "s/verify-names=.*/verify-names=$new_online/g" "$sv_dir/server.properties"
-        sed -i "s/server-ip=.*/server-ip=/g" "$sv_dir/server.properties"
-    fi
-    [ -f "$sv_dir/eula.txt" ] && sed -i 's/eula=false/eula=true/g' "$sv_dir/eula.txt"
-
-    write_server_conf "$sv_dir" "$name" "$new_ram" "$new_port" "$CORE"
-
-    dialog --title "$name" --msgbox "Настройки обновлены!\n\nRAM: $new_ram\nПорт: $new_port\nonline-mode: $new_online\n\nПерезапусти сервер." 11 40
-}
-
-server_create_service() {
-    local name="$1"
-    local sv_dir="$BASE_DIR/$name"
-    local sv_service="mbsft-${name}"
-    local SVDIR="$PREFIX/var/service/$sv_service"
-
-    mkdir -p "$SVDIR/log"
-
-    cat > "$SVDIR/run" << SEOF
-#!/data/data/com.termux/files/usr/bin/sh
-cd "$sv_dir"
-    cat > "$SVDIR/run" << SEOF
-#!/data/data/com.termux/files/usr/bin/sh
-cd "$sv_dir"
-
-# tmux не умеет работать в foreground без TTY так, как screen -Dm.
-# Эмулируем это: запускаем в фоне (-d) и ждем, пока сессия не исчезнет.
-tmux new-session -d -s "mbsft-${name}" ./start.sh
-while tmux has-session -t "mbsft-${name}" 2>/dev/null; do
-    sleep 5
-done
-SEOF
-    chmod +x "$SVDIR/run"
-
-    cat > "$SVDIR/log/run" << LEOF
-#!/data/data/com.termux/files/usr/bin/sh
-mkdir -p "$sv_dir/logs/sv"
-exec svlogd -tt "$sv_dir/logs/sv"
-LEOF
-    chmod +x "$SVDIR/log/run"
-    command -v sv-enable &>/dev/null && sv-enable "$sv_service" 2>/dev/null || true
-
-    dialog --title "$name" --msgbox "Сервис '$sv_service' создан!\n\nАвтозапуск + автосохранение\n\nУправление:\n  sv up $sv_service\n  sv down $sv_service" 12 48
+    
+    echo "Подключение к консоли $name..."
+    echo "Нажми 'Ctrl+B, затем D' чтобы выйти из консоли (оставить сервер работать)."
+    sleep 2
+    tmux attach-session -t "mbsft-$name"
+    clear
 }
 
 server_delete() {
     local name="$1"
-    local sv_dir="$BASE_DIR/$name"
-    local sv_service="mbsft-${name}"
-    local sv_screen="mbsft-${name}"
-
-    dialog --title "УДАЛЕНИЕ" --yesno "Удалить сервер '$name' и ВСЕ его файлы?\n\n$sv_dir" 8 50
-    [ $? -ne 0 ] && return 1
-
-    local confirm
-    confirm=$(dialog --title "ПОДТВЕРЖДЕНИЕ" --inputbox "Введи имя сервера для подтверждения:" 8 50 "" 3>&1 1>&2 2>&3)
-    if [ "$confirm" != "$name" ]; then
-        dialog --title "$TITLE" --msgbox "Отменено: имя не совпадает." 6 30
-        return 1
-    fi
-
-    echo "Остановка процессов..."
+    read -p "ТОЧНО удалить сервер $name? (y/n): " yn
+    if [[ "$yn" != "y" ]]; then return; fi
     
-    # 1. Остановка сервиса (runit)
-    if [ -d "$PREFIX/var/service/$sv_service" ]; then
-        sv down "$sv_service" 2>/dev/null || true
-        # Даем время на остановку
-        sleep 2
-        command -v sv-disable &>/dev/null && sv-disable "$sv_service" 2>/dev/null || true
-        rm -rf "$PREFIX/var/service/$sv_service"
+    server_stop "$name" 2>/dev/null
+    rm -rf "$BASE_DIR/$name"
+    if [ -d "$PREFIX/var/service/mbsft-$name" ]; then
+        sv down "mbsft-$name" 2>/dev/null
+        rm -rf "$PREFIX/var/service/mbsft-$name"
     fi
-
-    # 2. Остановка Tmux сессии
-    if tmux has-session -t "mbsft-${name}" 2>/dev/null; then
-        # Попытка мягкой остановки
-        tmux send-keys -t "mbsft-${name}" "stop" C-m 2>/dev/null
-        sleep 3
-        # Принудительное убийство сессии
-        tmux kill-session -t "mbsft-${name}" 2>/dev/null
-    fi
-    
-    # 4. Проверка процессов Java
-    if command -v pgrep &>/dev/null; then
-        # Пытаемся убить процессы, связанные с именем сервера (не идеально, но для tmux может не сработать pgrep -f mbsft-name так как это имя сессии)
-        # Но если java запущена через скрипт, она может висеть.
-        # Пока оставим pgrep -f но это может не найти сессию tmux по имени в аргументах процесса java.
-        # Лучше полагаться на tmux kill-session.
-        true
-    fi
-
-    # Финальная проверка
-    if [ -d "$PREFIX/var/service/$sv_service" ]; then
-        dialog --title "ОШИБКА" --msgbox "Не удалось удалить сервис '$sv_service'!" 6 40
-        return 1
-    fi
-    if tmux has-session -t "mbsft-${name}" 2>/dev/null; then
-        dialog --title "ОШИБКА" --msgbox "Не удалось остановить сессию '$sv_screen'!" 6 40
-        return 1
-    fi
-
-    if [ -d "$sv_dir" ]; then
-        rm -rf "$sv_dir"
-        dialog --title "$TITLE" --msgbox "Сервер '$name' и все его данные удалены." 6 40
-    else
-        dialog --title "$TITLE" --msgbox "Папка сервера не найдена, но сервисы очищены." 6 40
-    fi
-    
-    return 0
+    echo "Удалено."
+    read -r
 }
 
-# =====================
-# 5. Дашборд
-# =====================
-
-dashboard() {
-    local local_ip ext_ip
-    local_ip=$(get_local_ip)
-    ext_ip=$(get_external_ip)
-
-    local java_status="НЕ УСТАНОВЛЕНА"
-    if find_java; then
-        # Если кэш пуст, наполняем (хотя find_java должен был это сделать)
-        [ -z "$_CACHED_JVER" ] && _CACHED_JVER="$($JAVA_BIN -version 2>&1 | head -1)"
-        java_status="$_CACHED_JVER"
-    fi
-
-    local ssh_status="выкл"
-    pidof sshd &>/dev/null && ssh_status="порт 8022"
-
-    local info="Java:       $java_status\nЛокальный:  $local_ip\nВнешний:    $ext_ip\nSSH:        $ssh_status\n\n"
-
-    local servers
-    read -ra servers <<< "$(get_servers)"
-
-    if [ ${#servers[@]} -eq 0 ] || [ -z "${servers[0]}" ]; then
-        info+="Серверов нет."
-    else
-        info+="$(printf '%-16s %-7s %-5s %-10s %s\n' 'Имя' 'Порт' 'RAM' 'Статус' 'Подключение')"
-        info+="\n$(printf '%0.s─' {1..56})\n"
-        for srv in "${servers[@]}"; do
-            local sv_dir="$BASE_DIR/$srv"
-            read_server_conf "$sv_dir"
-            local actual_port
-            actual_port=$(get_actual_port "$sv_dir")
-            local status="стоп" connect="-"
-            if is_server_running "$srv"; then
-                status="РАБОТАЕТ"
-                connect="$local_ip:$actual_port"
-            fi
-            info+="$(printf '%-16s %-7s %-5s %-10s %s' "$NAME" "$actual_port" "$RAM" "$status" "$connect")\n"
-        done
-    fi
-
-    dialog --title "Дашборд" --msgbox "$info" 22 62
-}
-
-# =====================
-# 6. SSH и Ключи
-# =====================
-
-step_ssh() {
-    local choice
-    choice=$(dialog --title "SSH Управление" --menu "Выбери действие:" 14 55 6 \
-        "enable"  "Включить SSH + Автозапуск" \
-        "keys"    "Добавить SSH ключ (без пароля)" \
-        "status"  "Статус подключения" \
-        "passwd"  "Сменить пароль" \
-        "repair"  "Починить SSH (сброс ошибок)" \
-        "debug"   "РЕЖИМ ОТЛАДКИ (лог на экран)" \
-        3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && return
-
-    case "$choice" in
-        debug)
-            clear
-            echo "=== SSH DEBUG MODE ==="
-            echo "Сейчас SSH запустится в режиме отладки."
-            echo "Попробуй подключиться с ПК и смотри СЮДА на экран."
-            echo "Ты увидишь причину ошибки!"
-            echo "Для выхода нажми Ctrl+C"
-            echo ""
-            # Убиваем текущие
-            pkill sshd
-            # Запускаем в foreground с дебагом и выводом в stderr
-            /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022 </dev/tty >/dev/tty 2>&1
-
-            echo ""
-            echo "Отладка завершена. Перезапускаю обычный SSH..."
-            sshd
-            sleep 3
-            ;;
-            
-        repair)
-            clear
-            echo "=== Ремонт SSH ==="
-            echo "1. Остановка процессов..."
-            pkill sshd
-            sv-disable sshd 2>/dev/null
-            
-            echo "2. Исправление прав доступа..."
-            chmod 700 "$HOME"
-            chmod 700 "$HOME/.ssh"
-            chmod 600 "$HOME/.ssh/authorized_keys" 2>/dev/null
-            
-            echo "3. Генерация ключей хоста..."
-            ssh-keygen -A
-            
-            echo "4. Переустановка сервиса..."
-            source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null
-            sv-enable sshd
-            
-            echo "5. Запуск..."
-            sshd
-            
-            dialog --title "Готово" --msgbox "SSH перезапущен и права исправлены.\nПопробуй подключиться снова." 8 50
-            ;;
-
-        enable)
-            clear
-            echo "=== Настройка SSH ==="
-
-            # Автоматические ответы для dpkg
-            export DEBIAN_FRONTEND=noninteractive
-            export APT_LISTCHANGES_FRONTEND=none
-
-            # Установка ssh и сервисов
-            pkg install -y -o Dpkg::Options::="--force-confnew" openssh termux-services
-            
-            # Включаем сервис sshd
-            echo "Активация сервиса sshd..."
-            sv-enable sshd
-            
-            # Запускаем, если не запущен
-            if ! pgrep sshd >/dev/null; then
-                sshd
-            fi
-            
-            # Предлагаем сменить пароль, если это первый раз
-            dialog --title "Пароль" --yesno "Хочешь задать/сменить пароль для SSH?" 7 40
-            if [ $? -eq 0 ]; then
-                clear
-                echo "=== Установка пароля для SSH ==="
-                echo ""
-                if passwd </dev/tty >/dev/tty 2>&1; then
-                    echo ""
-                    echo "✓ Пароль успешно установлен!"
-                else
-                    echo ""
-                    echo "✗ Ошибка при установке пароля"
-                fi
-                echo ""
-                echo "Нажми Enter для продолжения..."
-                read -r </dev/tty
-            fi
-            
-            dialog --title "Готово" --msgbox "SSH включен и добавлен в автозагрузку!" 6 45
-            ;;
-            
-        keys)
-            local key_choice
-            key_choice=$(dialog --title "SSH Ключи" --menu "Как добавить ключ?" 10 50 3 \
-                "github" "Скачать с GitHub (по нику)" \
-                "manual" "Ввести вручную (вставить)" \
-                "reset"  "Удалить все ключи" \
-                3>&1 1>&2 2>&3)
-            [ $? -ne 0 ] && return
-            
-            mkdir -p "$HOME/.ssh"
-            touch "$HOME/.ssh/authorized_keys"
-            chmod 700 "$HOME/.ssh"
-            chmod 600 "$HOME/.ssh/authorized_keys"
-            
-            if [ "$key_choice" == "github" ]; then
-                local gh_user
-                gh_user=$(dialog --title "GitHub" --inputbox "Введи свой GitHub username:" 8 40 3>&1 1>&2 2>&3)
-                [ $? -ne 0 ] || [ -z "$gh_user" ] && return
-                
-                local tmp_key
-                tmp_key=$(mktemp)
-                
-                # Скачиваем с флагом -f (fail on error)
-                if curl -fsL "https://github.com/${gh_user}.keys" > "$tmp_key"; then
-                    # Проверяем, похоже ли это на ключ
-                    if grep -q "ssh-" "$tmp_key"; then
-                        echo "" >> "$HOME/.ssh/authorized_keys" # Разделитель
-                        cat "$tmp_key" >> "$HOME/.ssh/authorized_keys"
-                        chmod 600 "$HOME/.ssh/authorized_keys"
-                        dialog --title "Успех" --msgbox "Ключи пользователя $gh_user добавлены!" 6 40
-                    else
-                        dialog --title "Ошибка" --msgbox "У пользователя $gh_user нет публичных ключей (или файл пуст)." 8 45
-                    fi
-                else
-                     dialog --title "Ошибка" --msgbox "Не удалось скачать ключи (проверь ник и интернет)." 6 45
-                fi
-                rm -f "$tmp_key"
-                
-            elif [ "$key_choice" == "manual" ]; then
-                local key_text
-                key_text=$(dialog --title "Ввод ключа" --inputbox "Вставь pub-ключ (начинается с ssh-rsa ...):" 10 60 3>&1 1>&2 2>&3)
-                [ $? -ne 0 ] || [ -z "$key_text" ] && return
-                
-                if [[ "$key_text" == ssh-* ]]; then
-                    echo "" >> "$HOME/.ssh/authorized_keys"
-                    echo "$key_text" >> "$HOME/.ssh/authorized_keys"
-                    chmod 600 "$HOME/.ssh/authorized_keys"
-                    dialog --title "Успех" --msgbox "Ключ добавлен!" 6 30
-                else
-                    dialog --title "Ошибка" --msgbox "Это не похоже на SSH ключ (должен начинаться с ssh-...)" 8 45
-                fi
-                
-            elif [ "$key_choice" == "reset" ]; then
-                echo "" > "$HOME/.ssh/authorized_keys"
-                dialog --title "Сброс" --msgbox "Все ключи удалены." 6 30
-            fi
-            ;;
-            
-        status)
-            local user local_ip ext_ip
-            user=$(whoami)
-            local_ip=$(get_local_ip)
-            ext_ip=$(get_external_ip)
-            dialog --title "SSH Инфо" --msgbox "Пользователь: $user\nПорт: 8022\n\nЛокальный IP: $local_ip\nВнешний IP:   $ext_ip\n\nПодключение:\nssh -p 8022 $user@$local_ip" 14 50
-            ;;
-            
-        passwd)
-            clear
-            echo "=== Смена пароля SSH ==="
-            if passwd </dev/tty >/dev/tty 2>&1; then
-                echo ""
-                echo "✓ Пароль успешно изменен!"
-            else
-                echo ""
-                echo "✗ Ошибка при смене пароля"
-            fi
-            echo ""
-            echo "Нажми Enter для продолжения..."
-            read -r </dev/tty
-            ;;
-    esac
-}
-
-# =====================
-# Удаление всего
-# =====================
-uninstall_all() {
-    dialog --title "ОПАСНО!" --yesno "Ты точно хочешь удалить ВСЕ серверы и данные MBSFT?\n\nЭто действие нельзя отменить!" 8 50
-    [ $? -ne 0 ] && return
-
-    dialog --title "ПОДТВЕРЖДЕНИЕ" --yesno "Последний шанс!\n\nУдалить папку $BASE_DIR?" 7 40
-    [ $? -ne 0 ] && return
-
-    clear
-    echo "=== Остановка и удаление сервисов (runit) ==="
-    
-    # Ищем все сервисы mbsft-* в папке runit
-    for link in "$PREFIX/var/service"/mbsft-*; do
-        [ -e "$link" ] || continue
-        # Получаем имя сервиса
-        local sv_name
-        sv_name=$(basename "$link")
-        echo "Удаляю сервис: $sv_name"
-        
-        # Останавливаем
-        sv down "$sv_name" 2>/dev/null || true
-        # Удаляем линк
-        rm "$link" 2>/dev/null
-        # Удаляем саму папку сервиса из sv (если она там есть отдельно, хотя обычно это симлинк)
-        # В Termux обычно: /data/data.../var/service -> симлинки, а сами сервисы могут быть где-то еще.
-        # Но мы удаляем симлинк, и runsvdir перестанет его мониторить.
-    done
-    
-    echo "Жду остановки процессов..."
-    sleep 2
-
-    echo "=== Убийство остаточных процессов ==="
-    # Убиваем ВСЁ, что содержит "mbsft" (сервисы, сессии, логи), кроме нас самих ($$)
-    # Используем -9 (SIGKILL) для гарантии
-    pgrep -f "mbsft" | grep -v "$$" | xargs kill -9 2>/dev/null
-    
-    tmux kill-server 2>/dev/null # Убиваем tmux полностью
-    pkill -f "sleep 600" 2>/dev/null # Добиваем слипы
-
-    echo "=== Удаление файлов ==="
-    rm -rf "$BASE_DIR"
-    
-    # Удаляем конфиги dialog (тему)
-    rm -f "$HOME/.mbsft_dialogrc"
-    
-    dialog --title "Готово" --msgbox "Все данные MBSFT, сервисы и процессы очищены.\n\nЗависимости (Java, dialog) остались." 8 45
-}
-
-# =====================
-# Главное меню
-# =====================
-
-kill_zombie_loops() {
-    # 1. Убиваем зависшие менеджеры сервисов (runsv), если они касаются mbsft
-    # Это корень зла, который перезапускает скрипты
-    pkill -f "runsv mbsft" 2>/dev/null
-
-    # 2. Находим PID всех процессов sleep 600
-    local sleeps
-    sleeps=$(pgrep -f "sleep 600")
-    
-    if [ -n "$sleeps" ]; then
-        echo "=== ОЧИСТКА ЗОМБИ (sleep 600) ==="
-        for pid in $sleeps; do
-            # Находим Parent PID
-            local ppid
-            ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-            local parent_name=""
-            [ -n "$ppid" ] && parent_name=$(ps -o args= -p "$ppid" 2>/dev/null)
-            
-            echo "Убиваю sleep $pid (Родитель: PID $ppid -> $parent_name)"
-            
-            if [ -n "$ppid" ] && [ "$ppid" -gt 1 ]; then
-                 kill -9 "$ppid" 2>/dev/null
-            fi
-            kill -9 "$pid" 2>/dev/null
-        done
-        echo "=== ОЧИСТКА ЗАВЕРШЕНА ==="
-        echo ""
-    fi
-}
-
-main_loop() {
-    # Очистка мусорных процессов (умная)
-    kill_zombie_loops
-    pkill -f "sleep 600" 2>/dev/null # Добиваем остатки
-
+server_manage() {
+    local name="$1"
     while true; do
+        clear
+        local status="СТОП"
+        is_server_running "$name" && status="РАБОТАЕТ"
+        echo "=== Управление: $name [$status] ==="
+        select opt in "Запустить" "Остановить" "Консоль" "Удалить" "Назад"; do
+            case $opt in
+                "Запустить") server_start "$name"; read -p "Enter..." r; break ;;
+                "Остановить") server_stop "$name"; read -p "Enter..." r; break ;;
+                "Консоль") server_console "$name"; break ;;
+                "Удалить") server_delete "$name"; return ;;
+                "Назад") return ;;
+                *) echo "Неверно";;
+            esac
+        done
+    done
+}
+
+list_servers() {
+    while true; do
+        clear
+        echo "=== Мои серверы ==="
         local servers
         read -ra servers <<< "$(get_servers)"
-        local count=0
-        [ -n "${servers[0]:-}" ] && count=${#servers[@]}
+        if [ ${#servers[@]} -eq 0 ]; then
+            echo "Нет серверов."
+            read -r
+            return
+        fi
 
-        local running=0
-        for srv in "${servers[@]}"; do
-            [ -z "$srv" ] && continue
-            is_server_running "$srv" && running=$((running + 1))
+        local opts=("${servers[@]}" "Назад")
+        select srv in "${opts[@]}"; do
+            if [[ "$srv" == "Назад" ]]; then
+                return
+            elif [ -n "$srv" ]; then
+                server_manage "$srv"
+                break
+            fi
         done
-
-        local status_line="Серверов: $count | Запущено: $running"
-
-        local choice
-        choice=$(dialog --title "$TITLE" \
-            --menu "$status_line" 17 52 8 \
-            "deps"     "Установить зависимости" \
-            "create"   "Создать сервер (пошагово)" \
-            "quick"    "Быстрое создание" \
-            "servers"  "Мои серверы [$count шт.]" \
-            "dash"     "Дашборд" \
-            "ssh"      "Настроить SSH" \
-            "---"      "─────────────────────" \
-            "quit"     "Выход" \
-            "uninstall" "Удалить всё (СБРОС)" \
-            3>&1 1>&2 2>&3)
-
-        case $? in
-            1|255) break ;;
-        esac
-
-        case $choice in
-            deps)    step_deps ;;
-            create)  create_server ;;
-            quick)   quick_create ;;
-            servers) list_servers_menu ;;
-            dash)    dashboard ;;
-            ssh)     step_ssh ;;
-            quit)    break ;;
-            uninstall) uninstall_all ;;
-        esac
     done
+}
 
+uninstall_all() {
+    read -p "УДАЛИТЬ ВСЕ ДАННЫЕ? (y/n): " yn
+    if [[ "$yn" == "y" ]]; then
+        rm -rf "$BASE_DIR"
+        echo "Готово."
+    fi
+}
+
+step_ssh() {
+    while true; do
+        clear
+        echo "=== SSH Управление ==="
+        select opt in "Включить SSH + Автозапуск" "Добавить SSH ключ" "Статус подключения" "Сменить пароль" "Починить SSH" "DEBUG sshd" "Назад"; do
+            case $opt in
+                "Включить SSH + Автозапуск")
+                    echo "=== Настройка SSH ==="
+                    export DEBIAN_FRONTEND=noninteractive
+                    pkg install -y -o Dpkg::Options::="--force-confnew" openssh termux-services
+                    sv-enable sshd
+                    if ! pgrep sshd >/dev/null; then sshd; fi
+                    
+                    read -p "Хочешь задать пароль? (y/n): " yn
+                    if [[ "$yn" == "y" ]]; then
+                        passwd
+                    fi
+                    echo "SSH включен."
+                    read -r
+                    break
+                    ;;
+                "Добавить SSH ключ")
+                    echo "Как добавить ключ?"
+                    select kopt in "github" "manual" "reset" "back"; do
+                        case $kopt in
+                            "github")
+                                read -p "GitHub username: " gh_user
+                                if [ -n "$gh_user" ]; then
+                                    curl -fsL "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys" && echo "Ключи добавлены." || echo "Ошибка."
+                                fi
+                                break
+                                ;;
+                            "manual")
+                                read -p "Вставь pub-ключ (ssh-rsa ...): " key
+                                if [[ "$key" == ssh-* ]]; then
+                                    mkdir -p "$HOME/.ssh"
+                                    echo "$key" >> "$HOME/.ssh/authorized_keys"
+                                    echo "Добавлено."
+                                else
+                                    echo "Не похоже на ключ."
+                                fi
+                                break
+                                ;;
+                            "reset")
+                                echo "" > "$HOME/.ssh/authorized_keys"
+                                echo "Ключи сброшены."
+                                break
+                                ;;
+                            "back") break ;;
+                        esac
+                    done
+                    break
+                    ;;
+                "Статус подключения")
+                    local user=$(whoami)
+                    local local_ip=$(get_local_ip)
+                    local ext_ip=$(get_external_ip)
+                    echo "User: $user"
+                    echo "Local: $local_ip"
+                    echo "External: $ext_ip"
+                    echo "Connect: ssh -p 8022 $user@$local_ip"
+                    read -r
+                    break
+                    ;;
+                "Сменить пароль")
+                    passwd
+                    read -r
+                    break
+                    ;;
+                "Починить SSH")
+                    echo "Ремонт..."
+                    pkill sshd
+                    sv-disable sshd 2>/dev/null
+                    chmod 700 "$HOME" "$HOME/.ssh"
+                    chmod 600 "$HOME/.ssh/authorized_keys" 2>/dev/null
+                    ssh-keygen -A
+                    source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null
+                    sv-enable sshd
+                    sshd
+                    echo "Готово."
+                    read -r
+                    break
+                    ;;
+                "DEBUG sshd")
+                    echo "Запускаю sshd в режиме отладки..."
+                    echo "Нажми Ctrl+C для выхода."
+                    pkill sshd
+                    /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022
+                    sshd
+                    break
+                    ;;
+                "Назад") return ;;
+            esac
+        done
+    done
+}
+
+dashboard() {
     clear
+    local local_ip=$(get_local_ip)
+    local ext_ip=$(get_external_ip)
+    local java_ver="Не установлена"
+    if find_java; then
+        java_ver=$("$JAVA_BIN" -version 2>&1 | head -1)
+    fi
+    local ssh_status="OFF"
+    pidof sshd &>/dev/null && ssh_status="ON (8022)"
+
+    echo "=== DASHBOARD ==="
+    echo "Java:    $java_ver"
+    echo "Local:   $local_ip"
+    echo "Ext:     $ext_ip"
+    echo "SSH:     $ssh_status"
+    echo ""
+    echo "Серверы:"
+    local servers
+    read -ra servers <<< "$(get_servers)"
+    if [ ${#servers[@]} -eq 0 ]; then
+        echo "  (нет серверов)"
+    else
+        printf "%-15s %-6s %-10s\n" "Имя" "Порт" "Статус"
+        for srv in "${servers[@]}"; do
+            local sv_dir="$BASE_DIR/$srv"
+            local port=$(get_actual_port "$sv_dir")
+            local stat="STOPPED"
+            is_server_running "$srv" && stat="RUNNING"
+            printf "%-15s %-6s %-10s\n" "$srv" "$port" "$stat"
+        done
+    fi
+    echo ""
+    read -p "Enter..."
 }
 
 # =====================
-# Main
+# Main Loop
 # =====================
+main_loop() {
+    while true; do
+        clear
+        echo "=== MBSFT v${VERSION} CLI ==="
+        echo "1) Установить зависимости"
+        echo "2) Создать сервер"
+        echo "3) Мои серверы"
+        echo "4) Дашборд"
+        echo "5) SSH"
+        echo "6) Удалить всё"
+        echo "7) Выход"
+        read -p "Выбор: " choice
+        case $choice in
+            1) step_deps ;;
+            2) create_server ;;
+            3) list_servers ;;
+            4) dashboard ;;
+            5) step_ssh ;;
+            6) uninstall_all ;;
+            7) exit 0 ;;
+            *) echo "Неверно." ;;
+        esac
+    done
+}
+
 main_loop
