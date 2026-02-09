@@ -375,14 +375,15 @@ step_deps() {
     while true; do
         clear
         check_deps_status
-        echo "Меню зависимостей:"
-        select opt in "Установить всё" "Назад"; do
-            case $opt in
-                "Установить всё") run_install_deps; break ;;
-                "Назад") return ;;
-                *) echo "Неверный выбор";;
-            esac
-        done
+        echo "=== Меню зависимостей ==="
+        echo "1) Установить всё"
+        echo "2) Назад"
+        read -p "Выбор: " opt
+        case $opt in
+            1) run_install_deps; break ;;
+            2) return ;;
+            *) echo "Неверный выбор"; sleep 1 ;;
+        esac
     done
 }
 
@@ -409,12 +410,20 @@ create_server() {
     fi
 
     echo "Сколько RAM выделить?"
+    echo "1) 512M"
+    echo "2) 1G"
+    echo "3) 2G"
+    echo "4) 4G"
     local ram="1G"
-    select r in "512M" "1G" "2G" "4G"; do
-        if [ -n "$r" ]; then
-            ram=$r
-            break
-        fi
+    while true; do
+        read -p "Выбор (2): " r_choice
+        case "${r_choice:-2}" in
+            1) ram="512M"; break ;;
+            2) ram="1G"; break ;;
+            3) ram="2G"; break ;;
+            4) ram="4G"; break ;;
+            *) echo "Неверно. 1-4";;
+        esac
     done
 
     local default_port=$(next_free_port)
@@ -422,13 +431,23 @@ create_server() {
     port=${port:-$default_port}
 
     echo "Ядро сервера:"
+    echo "1) poseidon (Beta 1.7.3)"
+    echo "2) reindev (Beta 1.7.3 custom)"
+    echo "3) foxloader (Beta 1.7.3 modloader)"
+    echo "4) custom (свой файл)"
+    
     local core_choice
     local poseidon_url="https://github.com/FLEXIY0/MBSFT/releases/download/servers/project-poseidon-1.1.8.jar"
-    select c in "poseidon" "reindev" "foxloader" "custom"; do
-        if [ -n "$c" ]; then
-            core_choice=$c
-            break
-        fi
+    
+    while true; do
+        read -p "Выбор: " c_choice
+        case $c_choice in
+            1) core_choice="poseidon"; break ;;
+            2) core_choice="reindev"; break ;;
+            3) core_choice="foxloader"; break ;;
+            4) core_choice="custom"; break ;;
+            *) echo "Неверно. 1-4";;
+        esac
     done
     
     mkdir -p "$sv_dir"
@@ -554,16 +573,21 @@ server_manage() {
         local status="СТОП"
         is_server_running "$name" && status="РАБОТАЕТ"
         echo "=== Управление: $name [$status] ==="
-        select opt in "Запустить" "Остановить" "Консоль" "Удалить" "Назад"; do
-            case $opt in
-                "Запустить") server_start "$name"; read -p "Enter..." r; break ;;
-                "Остановить") server_stop "$name"; read -p "Enter..." r; break ;;
-                "Консоль") server_console "$name"; break ;;
-                "Удалить") server_delete "$name"; return ;;
-                "Назад") return ;;
-                *) echo "Неверно";;
-            esac
-        done
+        echo "1) Запустить"
+        echo "2) Остановить"
+        echo "3) Консоль"
+        echo "4) Удалить"
+        echo "5) Назад"
+        
+        read -p "Выбор: " opt
+        case $opt in
+            1) server_start "$name"; read -p "Enter..." r; ;;
+            2) server_stop "$name"; read -p "Enter..." r; ;;
+            3) server_console "$name"; ;;
+            4) server_delete "$name" && return ;;
+            5) return ;;
+            *) echo "Неверно"; sleep 1;;
+        esac
     done
 }
 
@@ -579,15 +603,24 @@ list_servers() {
             return
         fi
 
-        local opts=("${servers[@]}" "Назад")
-        select srv in "${opts[@]}"; do
-            if [[ "$srv" == "Назад" ]]; then
-                return
-            elif [ -n "$srv" ]; then
-                server_manage "$srv"
-                break
-            fi
+        echo "0) Назад"
+        local i=1
+        for srv in "${servers[@]}"; do
+            echo "$i) $srv"
+            ((i++))
         done
+
+        read -p "Выбери сервер (номер): " idx
+        if [ "$idx" == "0" ]; then
+            return
+        elif [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -le "${#servers[@]}" ] && [ "$idx" -gt 0 ]; then
+            # array is 0-indexed, so idx-1
+            local selected="${servers[$((idx-1))]}"
+            server_manage "$selected"
+        else
+            echo "Неверный номер."
+            sleep 1
+        fi
     done
 }
 
@@ -603,96 +636,107 @@ step_ssh() {
     while true; do
         clear
         echo "=== SSH Управление ==="
-        select opt in "Включить SSH + Автозапуск" "Добавить SSH ключ" "Статус подключения" "Сменить пароль" "Починить SSH" "DEBUG sshd" "Назад"; do
-            case $opt in
-                "Включить SSH + Автозапуск")
-                    echo "=== Настройка SSH ==="
-                    export DEBIAN_FRONTEND=noninteractive
-                    pkg install -y -o Dpkg::Options::="--force-confnew" openssh termux-services
-                    sv-enable sshd
-                    if ! pgrep sshd >/dev/null; then sshd; fi
-                    
-                    read -p "Хочешь задать пароль? (y/n): " yn
-                    if [[ "$yn" == "y" ]]; then
-                        passwd
-                    fi
-                    echo "SSH включен."
-                    read -r
-                    break
-                    ;;
-                "Добавить SSH ключ")
-                    echo "Как добавить ключ?"
-                    select kopt in "github" "manual" "reset" "back"; do
-                        case $kopt in
-                            "github")
-                                read -p "GitHub username: " gh_user
-                                if [ -n "$gh_user" ]; then
-                                    curl -fsL "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys" && echo "Ключи добавлены." || echo "Ошибка."
-                                fi
-                                break
-                                ;;
-                            "manual")
-                                read -p "Вставь pub-ключ (ssh-rsa ...): " key
-                                if [[ "$key" == ssh-* ]]; then
-                                    mkdir -p "$HOME/.ssh"
-                                    echo "$key" >> "$HOME/.ssh/authorized_keys"
-                                    echo "Добавлено."
-                                else
-                                    echo "Не похоже на ключ."
-                                fi
-                                break
-                                ;;
-                            "reset")
-                                echo "" > "$HOME/.ssh/authorized_keys"
-                                echo "Ключи сброшены."
-                                break
-                                ;;
-                            "back") break ;;
-                        esac
-                    done
-                    break
-                    ;;
-                "Статус подключения")
-                    local user=$(whoami)
-                    local local_ip=$(get_local_ip)
-                    local ext_ip=$(get_external_ip)
-                    echo "User: $user"
-                    echo "Local: $local_ip"
-                    echo "External: $ext_ip"
-                    echo "Connect: ssh -p 8022 $user@$local_ip"
-                    read -r
-                    break
-                    ;;
-                "Сменить пароль")
+        echo "1) Включить SSH + Автозапуск"
+        echo "2) Добавить SSH ключ"
+        echo "3) Статус подключения"
+        echo "4) Сменить пароль"
+        echo "5) Починить SSH"
+        echo "6) DEBUG sshd"
+        echo "7) Назад"
+
+        read -p "Выбор: " opt
+        case $opt in
+            1)
+                echo "=== Настройка SSH ==="
+                export DEBIAN_FRONTEND=noninteractive
+                pkg install -y -o Dpkg::Options::="--force-confnew" openssh termux-services
+                sv-enable sshd
+                if ! pgrep sshd >/dev/null; then sshd; fi
+                
+                read -p "Хочешь задать пароль? (y/n): " yn
+                if [[ "$yn" == "y" ]]; then
                     passwd
-                    read -r
-                    break
-                    ;;
-                "Починить SSH")
-                    echo "Ремонт..."
-                    pkill sshd
-                    sv-disable sshd 2>/dev/null
-                    chmod 700 "$HOME" "$HOME/.ssh"
-                    chmod 600 "$HOME/.ssh/authorized_keys" 2>/dev/null
-                    ssh-keygen -A
-                    source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null
-                    sv-enable sshd
-                    sshd
-                    echo "Готово."
-                    read -r
-                    break
-                    ;;
-                "DEBUG sshd")
-                    echo "Запускаю sshd в режиме отладки..."
-                    echo "Нажми Ctrl+C для выхода."
-                    pkill sshd
-                    /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022
-                    sshd
-                    break
-                    ;;
-                "Назад") return ;;
-            esac
-        done
+                fi
+                echo "SSH включен."
+                read -r
+                ;;
+            2)
+                
+                echo "=== Добавить ключ ==="
+                echo "1) github (по нику)"
+                echo "2) manual (вставка)"
+                echo "3) reset (сброс)"
+                echo "4) Назад"
+                
+                read -p "Выбор: " kopt
+                case $kopt in
+                    1)
+                        read -p "GitHub username: " gh_user
+                        if [ -n "$gh_user" ]; then
+                            curl -fsL "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys" && echo "Ключи добавлены." || echo "Ошибка."
+                        else
+                             echo "Пустой ник."
+                        fi
+                        read -r
+                        ;;
+                    2)
+                        read -p "Вставь pub-ключ (ssh-rsa ...): " key
+                        if [[ "$key" == ssh-* ]]; then
+                            mkdir -p "$HOME/.ssh"
+                            echo "$key" >> "$HOME/.ssh/authorized_keys"
+                            echo "Добавлено."
+                        else
+                            echo "Не похоже на ключ."
+                        fi
+                        read -r
+                        ;;
+                    3)
+                        echo "" > "$HOME/.ssh/authorized_keys"
+                        echo "Ключи сброшены."
+                        read -r
+                        ;;
+                    4) ;;
+                    *) echo "Неверно"; sleep 1 ;;
+                esac
+                ;;
+            3)
+                local user=$(whoami)
+                local local_ip=$(get_local_ip)
+                local ext_ip=$(get_external_ip)
+                echo "User: $user"
+                echo "Local: $local_ip"
+                echo "External: $ext_ip"
+                echo "Connect: ssh -p 8022 $user@$local_ip"
+                read -r
+                ;;
+            4)
+                passwd
+                read -r
+                ;;
+            5)
+                echo "Ремонт..."
+                pkill sshd
+                sv-disable sshd 2>/dev/null
+                chmod 700 "$HOME" "$HOME/.ssh"
+                chmod 600 "$HOME/.ssh/authorized_keys" 2>/dev/null
+                ssh-keygen -A
+                source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null
+                sv-enable sshd
+                sshd
+                echo "Готово."
+                read -r
+                ;;
+            6)
+                echo "Запускаю sshd в режиме отладки..."
+                echo "Нажми Ctrl+C для выхода."
+                pkill sshd
+                /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022
+                sshd
+                read -r
+                ;;
+            7) return ;;
+            *) echo "Неверный выбор"; sleep 1 ;;
+        esac
     done
 }
 
