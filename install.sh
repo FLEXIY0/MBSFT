@@ -787,17 +787,7 @@ EOF
     if [ -f "$sv_dir/server.jar" ]; then
         dialog --title "$name" --yesno "Сервер создан!\n\nЗапустить сейчас?\n(Сервер запустится в фоне, откроется консоль)" 10 54
         if [ $? -eq 0 ]; then
-            clear
-            echo "=== Запуск $name ==="
             server_start "$name"
-
-            echo "Сервер запущен в tmux!"
-            echo "Сейчас откроется консоль."
-            echo "Чтобы выйти из консоли (оставив сервер работать), нажми: Ctrl+B, затем D"
-            echo "Чтобы остановить сервер: напиши 'stop' в консоли."
-            echo ""
-            echo "Нажми Enter..."
-            read -r </dev/tty
             server_console "$name"
         fi
     fi
@@ -978,7 +968,7 @@ server_start() {
     # Запуск в новой сессии tmux в фоне (-d)
     # Имя сессии: mbsft-$name
     # Добавляем '; read' чтобы консоль не закрывалась при ошибке/остановке
-    tmux new-session -d -s "mbsft-$name" "cd \"$sv_dir\" && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter, чтобы закрыть это окно...'; read </dev/tty"
+    tmux new-session -d -s "mbsft-$name" "cd \"$sv_dir\" && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter...'; read"
     
     sleep 2 # Даем время на запуск
 
@@ -1043,33 +1033,12 @@ server_console() {
         dialog --title "Ошибка" --msgbox "Сервер $name не запущен!" 6 40
         return
     fi
-    # Запускаем tmux в subshell с чистым TTY
-    # (dialog перенаправляет дескрипторы, нужно их восстановить)
-    (
-        exec </dev/tty >/dev/tty 2>&1
-        clear
-        echo "=== Консоль сервера: $name ==="
-        echo ""
-        echo "Управление:"
-        echo "  • Выход (оставить работать): Ctrl+B, затем D"
-        echo "  • Остановить сервер: напиши 'stop'"
-        echo ""
-        echo "Подключаюсь к сессии..."
-        sleep 1
-        tmux attach-session -t "mbsft-$name"
-
-        # После выхода из консоли
-        clear
-        echo "=== Вышел из консоли $name ==="
-        if tmux has-session -t "mbsft-$name" 2>/dev/null; then
-            echo "✓ Сервер продолжает работать в фоне"
-        else
-            echo "✗ Сервер остановлен"
-        fi
-        echo ""
-        echo "Нажми Enter для продолжения..."
-        read -r
-    )
+    # Сбрасываем терминал после dialog (dialog может сломать stty настройки)
+    stty sane 2>/dev/null
+    # TMUX= убирает переменную чтобы не было конфликта вложенных сессий
+    TMUX= tmux attach-session -t "mbsft-$name" </dev/tty >/dev/tty 2>&1
+    # Восстанавливаем терминал после tmux
+    stty sane 2>/dev/null
 }
 
 server_settings() {
