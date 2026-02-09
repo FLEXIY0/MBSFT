@@ -441,7 +441,7 @@ install_java() {
     fi
 
     # 2. Установка Ubuntu с альтернативными источниками
-    if ! proot-distro list | grep -q "ubuntu.*installed"; then
+    if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
         echo "[2/4] Скачивание и установка Ubuntu (~55MB)..."
         echo ""
 
@@ -514,7 +514,7 @@ install_java() {
         fi
 
         # Проверяем успешность установки
-        if ! proot-distro list | grep -q "ubuntu.*installed"; then
+        if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
             echo "ОШИБКА: Ubuntu не установлена корректно"
             return 1
         fi
