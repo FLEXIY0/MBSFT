@@ -1,5 +1,7 @@
 # MBSFT
-
+<p align="center">
+  <img width="805" height="308" alt="изображение" src="https://github.com/user-attachments/assets/791db193-5650-4ea3-9110-bbbfc4e4f0d6" />
+</p>
 CLI manager for Minecraft Beta 1.7.3 servers on Termux (Android).
 
 ## Install
