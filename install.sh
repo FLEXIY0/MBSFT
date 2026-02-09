@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="3.1"
+VERSION="3.2"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -1079,6 +1079,51 @@ EOF
     done
 }
 
+cleanup_old_services() {
+    clear
+    show_banner
+    echo "=== Очистка старых сервисов ==="
+    echo ""
+    echo "Это удалит:"
+    echo "  - Старые runit процессы (runsvdir, svlogd)"
+    echo "  - Старые сервисы из $PREFIX/var/service"
+    echo "  - Старые pid файлы"
+    echo "  - Сбросит конфиги сервисов"
+    echo ""
+    read -p "Продолжить? (y/n): " yn
+    if [[ "$yn" != "y" ]]; then return; fi
+
+    echo ""
+    echo "Остановка старых процессов..."
+    pkill -9 runsvdir 2>/dev/null
+    pkill -9 svlogd 2>/dev/null
+    pkill -9 runsv 2>/dev/null
+    pkill -f "mbsft-.*watchdog" 2>/dev/null
+    pkill -f "mbsft-.*autosave" 2>/dev/null
+    sleep 1
+
+    echo "Удаление старых сервисов..."
+    rm -rf "$PREFIX/var/service/mbsft-"* 2>/dev/null
+
+    echo "Очистка pid файлов..."
+    rm -f ~/mbsft-servers/*/.watchdog.pid 2>/dev/null
+    rm -f ~/mbsft-servers/*/.autosave.pid 2>/dev/null
+
+    echo "Сброс конфигов..."
+    for conf in ~/mbsft-servers/*/.mbsft.conf; do
+        if [ -f "$conf" ]; then
+            sed -i 's/^WATCHDOG_ENABLED=.*/WATCHDOG_ENABLED=no/' "$conf"
+            sed -i 's/^AUTOSAVE_ENABLED=.*/AUTOSAVE_ENABLED=no/' "$conf"
+        fi
+    done
+
+    echo ""
+    echo "✓ Очистка завершена!"
+    echo ""
+    echo "Теперь можно заново включить нужные сервисы."
+    read -r
+}
+
 dashboard() {
     clear
     local local_ip=$(get_local_ip)
@@ -1232,7 +1277,7 @@ main_loop() {
         read -ra servers <<< "$(get_servers)"
         local srv_count=${#servers[@]}
 
-        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Проверить обновление" "Удалить всё" "Выход")
+        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Очистка старых сервисов" "Проверить обновление" "Удалить всё" "Выход")
 
         # Header с версией и количеством серверов
         local menu_header="MBSFT v$VERSION | Серверов: $srv_count"
@@ -1246,9 +1291,10 @@ main_loop() {
             2) list_servers ;;
             3) dashboard ;;
             4) step_ssh ;;
-            5) manual_check_update ;;
-            6) uninstall_all ;;
-            7|-1) exit 0 ;;
+            5) cleanup_old_services ;;
+            6) manual_check_update ;;
+            7) uninstall_all ;;
+            8|-1) exit 0 ;;
         esac
     done
 }
