@@ -405,6 +405,7 @@ run_uninstall_deps() {
 step_deps() {
     while true; do
         clear
+        show_banner
         check_deps_status
         echo "=== Меню зависимостей ==="
         echo "1) Установить всё"
@@ -603,6 +604,7 @@ server_manage() {
     local name="$1"
     while true; do
         clear
+        show_banner
         local status="СТОП"
         is_server_running "$name" && status="РАБОТАЕТ"
         echo "=== Управление: $name [$status] ==="
@@ -627,32 +629,34 @@ server_manage() {
 list_servers() {
     while true; do
         clear
+        show_banner
         echo "=== Мои серверы ==="
         local servers
         read -ra servers <<< "$(get_servers)"
         if [ ${#servers[@]} -eq 0 ]; then
             echo "Нет серверов."
-            read -r
-            return
-        fi
+            echo "0) Назад"
+            read -p "Выбор: " idx
+            if [ "$idx" == "0" ]; then return; fi
+        else 
+            echo "0) Назад"
+            local i=1
+            for srv in "${servers[@]}"; do
+                echo "$i) $srv"
+                ((i++))
+            done
 
-        echo "0) Назад"
-        local i=1
-        for srv in "${servers[@]}"; do
-            echo "$i) $srv"
-            ((i++))
-        done
-
-        read -p "Выбери сервер (номер): " idx
-        if [ "$idx" == "0" ]; then
-            return
-        elif [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -le "${#servers[@]}" ] && [ "$idx" -gt 0 ]; then
-            # array is 0-indexed, so idx-1
-            local selected="${servers[$((idx-1))]}"
-            server_manage "$selected"
-        else
-            echo "Неверный номер."
-            sleep 1
+            read -p "Выбери сервер (номер): " idx
+            if [ "$idx" == "0" ]; then
+                return
+            elif [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -le "${#servers[@]}" ] && [ "$idx" -gt 0 ]; then
+                # array is 0-indexed, so idx-1
+                local selected="${servers[$((idx-1))]}"
+                server_manage "$selected"
+            else
+                echo "Неверный номер."
+                sleep 1
+            fi
         fi
     done
 }
@@ -668,6 +672,7 @@ uninstall_all() {
 step_ssh() {
     while true; do
         clear
+        show_banner
         echo "=== SSH Управление ==="
         echo "1) Включить SSH + Автозапуск"
         echo "2) Добавить SSH ключ"
@@ -878,9 +883,14 @@ main_loop() {
     while true; do
         clear
         show_banner
+        
+        local servers
+        read -ra servers <<< "$(get_servers)"
+        local srv_count=${#servers[@]}
+
         echo "1) Установить зависимости"
         echo "2) Создать сервер"
-        echo "3) Мои серверы"
+        echo "3) Мои серверы ($srv_count)"
         echo "4) Дашборд"
         echo "5) SSH"
         echo "6) Удалить всё"
