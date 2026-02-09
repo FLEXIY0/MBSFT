@@ -414,37 +414,112 @@ install_java() {
     export DEBIAN_FRONTEND=noninteractive
     export APT_LISTCHANGES_FRONTEND=none
 
+    # Оптимизация зеркал ПЕРЕД установкой
+    echo "[0/4] Проверка скорости зеркал..."
+    if ! command -v proot-distro &>/dev/null; then
+        # Если proot-distro нет - ищем быстрое зеркало
+        optimize_mirrors
+    fi
+
     # 1. Установка proot-distro
     if ! command -v proot-distro &>/dev/null; then
         echo "[1/4] Установка proot-distro..."
 
-        # Сначала пробуем установить так
+        # Установка с оптимизированного зеркала
         pkg install -y -o Dpkg::Options::="--force-confnew" proot-distro
 
-        # Если не вышло — ищем зеркала
         if [ $? -ne 0 ]; then
             echo ""
-            echo "ОШИБКА загрузки. Пробую найти быстрые зеркала..."
-            optimize_mirrors
-            pkg install -y -o Dpkg::Options::="--force-confnew" proot-distro
-
-            if [ $? -ne 0 ]; then
-                echo ""
-                echo "ОШИБКА: Не удалось установить proot-distro даже с новыми зеркалами!"
-                echo "Попробуй выполнить 'termux-change-repo' вручную."
-                return 1
-            fi
+            echo "ОШИБКА: Не удалось установить proot-distro!"
+            echo ""
+            echo "РЕШЕНИЕ:"
+            echo "1. Выполни: termux-change-repo"
+            echo "2. Выбери самое быстрое зеркало (попробуй Grimler или BFSU)"
+            echo "3. Перезапусти установку MBSFT"
+            return 1
         fi
     fi
 
-    # 2. Установка Ubuntu
+    # 2. Установка Ubuntu с альтернативными источниками
     if ! proot-distro list | grep -q "ubuntu.*installed"; then
-        echo "[2/4] Скачивание и установка Ubuntu..."
-        proot-distro install ubuntu
-        if [ $? -ne 0 ]; then
-            echo "ОШИБКА: Не удалось установить Ubuntu."
+        echo "[2/4] Скачивание и установка Ubuntu (~55MB)..."
+        echo ""
+
+        # Альтернативные источники Ubuntu rootfs (быстрые CDN)
+        # questing = Ubuntu 25.10 (текущая версия в proot-distro v4.30.1)
+        local alt_urls=(
+            "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+            "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+            "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+        )
+
+        local cache_dir="$PREFIX/var/lib/proot-distro/dlcache"
+        local tarball="$cache_dir/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+
+        mkdir -p "$cache_dir"
+
+        # Пробуем альтернативные источники (с прогресс-баром)
+        local downloaded=false
+        for url in "${alt_urls[@]}"; do
+            local mirror_name=$(echo $url | cut -d'/' -f3 | cut -d':' -f1)
+            echo "Попытка загрузки с: $mirror_name"
+
+            # Используем wget с таймаутом и прогресс-баром
+            if timeout 120 wget --show-progress --progress=bar:force -O "$tarball" "$url" 2>&1; then
+                # Проверяем размер файла (Ubuntu rootfs должен быть > 50MB)
+                local size=$(stat -c%s "$tarball" 2>/dev/null || stat -f%z "$tarball" 2>/dev/null || echo 0)
+                if [ "$size" -gt 50000000 ]; then
+                    echo "✓ Загружено успешно ($(($size / 1024 / 1024))MB)"
+                    downloaded=true
+                    break
+                else
+                    echo "✗ Файл поврежден или неполный, пробую следующий..."
+                    rm -f "$tarball"
+                fi
+            else
+                echo "✗ Тайм-аут или ошибка, пробую следующий..."
+                rm -f "$tarball"
+            fi
+        done
+
+        # Если скачали вручную - запускаем proot-distro install (оно найдет файл в кеше)
+        if [ "$downloaded" = true ]; then
+            echo "Установка Ubuntu из кеша..."
+            proot-distro install ubuntu
+
+            if [ $? -ne 0 ]; then
+                echo "ОШИБКА установки. Пробую стандартный метод..."
+                rm -f "$tarball"
+                downloaded=false
+            fi
+        fi
+
+        # Если альтернативы не сработали - используем стандартный метод
+        if [ "$downloaded" = false ]; then
+            echo "Использую стандартное зеркало proot-distro..."
+            echo "ВНИМАНИЕ: Если загрузка медленная (< 100 KB/s):"
+            echo "  1. Нажми Ctrl+C"
+            echo "  2. Выполни: termux-change-repo"
+            echo "  3. Выбери быстрое зеркало (Grimler/BFSU)"
+            echo ""
+
+            proot-distro install ubuntu
+
+            if [ $? -ne 0 ]; then
+                echo ""
+                echo "ОШИБКА: Не удалось установить Ubuntu."
+                echo "Попробуй сменить зеркало: termux-change-repo"
+                return 1
+            fi
+        fi
+
+        # Проверяем успешность установки
+        if ! proot-distro list | grep -q "ubuntu.*installed"; then
+            echo "ОШИБКА: Ubuntu не установлена корректно"
             return 1
         fi
+
+        echo "✓ Ubuntu установлена!"
     else
         echo "[2/4] Ubuntu уже установлена."
     fi
