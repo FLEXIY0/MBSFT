@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="3.2"
+VERSION="3.3"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -798,6 +798,80 @@ remove_autosave_service() {
     fi
 }
 
+show_server_debug() {
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+
+    clear
+    show_banner
+    echo "=== DEBUG: $name ==="
+    echo ""
+
+    # 1. Конфиг файл
+    echo "--- Конфиг (.mbsft.conf) ---"
+    if [ -f "$sv_dir/.mbsft.conf" ]; then
+        cat "$sv_dir/.mbsft.conf"
+    else
+        echo "Файл не найден!"
+    fi
+    echo ""
+
+    # 2. PID файлы
+    echo "--- PID файлы ---"
+    echo -n "Watchdog PID файл: "
+    if [ -f "$sv_dir/.watchdog.pid" ]; then
+        local wpid=$(cat "$sv_dir/.watchdog.pid")
+        echo "$wpid"
+        echo -n "  Процесс живой? "
+        if kill -0 "$wpid" 2>/dev/null; then
+            echo "✓ ДА (PID $wpid запущен)"
+        else
+            echo "✗ НЕТ (процесс не существует)"
+        fi
+    else
+        echo "Не существует"
+    fi
+
+    echo -n "Autosave PID файл: "
+    if [ -f "$sv_dir/.autosave.pid" ]; then
+        local apid=$(cat "$sv_dir/.autosave.pid")
+        echo "$apid"
+        echo -n "  Процесс живой? "
+        if kill -0 "$apid" 2>/dev/null; then
+            echo "✓ ДА (PID $apid запущен)"
+        else
+            echo "✗ НЕТ (процесс не существует)"
+        fi
+    else
+        echo "Не существует"
+    fi
+    echo ""
+
+    # 3. Логи
+    echo "--- Последние 5 строк логов ---"
+    if [ -f "$sv_dir/.watchdog.log" ]; then
+        echo "Watchdog:"
+        tail -5 "$sv_dir/.watchdog.log" 2>/dev/null || echo "  (пусто)"
+    else
+        echo "Watchdog: лог не существует"
+    fi
+
+    if [ -f "$sv_dir/.autosave.log" ]; then
+        echo "Autosave:"
+        tail -5 "$sv_dir/.autosave.log" 2>/dev/null || echo "  (пусто)"
+    else
+        echo "Autosave: лог не существует"
+    fi
+    echo ""
+
+    # 4. Процессы bash
+    echo "--- Связанные bash процессы ---"
+    ps aux | grep -E "mbsft-$name|bash.*$sv_dir" | grep -v grep || echo "(нет)"
+
+    echo ""
+    read -p "Нажми Enter..."
+}
+
 configure_autosave() {
     local name="$1"
     local sv_dir="$BASE_DIR/$name"
@@ -907,7 +981,7 @@ server_manage() {
             fi
         fi
 
-        local menu_items=("Запустить" "Остановить" "Консоль" "Автоперезапуск" "Автосохранение" "Удалить" "Назад")
+        local menu_items=("Запустить" "Остановить" "Консоль" "Автоперезапуск" "Автосохранение" "Debug" "Удалить" "Назад")
 
         # Формируем header для fzf с информацией о сервере
         local menu_header="$name [$status] :$server_port | Перезапуск: $watchdog_status$watchdog_real_status Сохранение: $autosave_status$autosave_real_status"
@@ -921,8 +995,9 @@ server_manage() {
             2) server_console "$name" ;;
             3) toggle_watchdog "$name" ;;
             4) configure_autosave "$name" ;;
-            5) server_delete "$name" && return ;;
-            6|-1) return ;;
+            5) show_server_debug "$name" ;;
+            6) server_delete "$name" && return ;;
+            7|-1) return ;;
         esac
     done
 }
