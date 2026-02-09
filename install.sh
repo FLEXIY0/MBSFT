@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="2.6-main"
+VERSION="2.6"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
