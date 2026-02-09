@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="2.9"
+VERSION="3.0"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -147,6 +147,7 @@ EOF
 # Меню со стрелочками через fzf
 arrow_menu() {
     local -n items=$1
+    local header="${2:-}"  # Опциональный header для отображения важной информации
 
     # Проверка наличия fzf
     if ! command -v fzf &>/dev/null; then
@@ -158,16 +159,25 @@ arrow_menu() {
         }
     fi
 
+    # Формируем параметры fzf
+    local fzf_params=(
+        --height=40%
+        --reverse
+        --prompt="→ "
+        --pointer="●"
+        --color='fg:7,fg+:2,bg+:-1,pointer:2,prompt:2'
+        --no-info
+        --no-scrollbar
+    )
+
+    # Добавляем header если передан
+    if [ -n "$header" ]; then
+        fzf_params+=(--header="$header")
+    fi
+
     # Показываем меню через fzf
     local selected
-    selected=$(printf '%s\n' "${items[@]}" | fzf \
-        --height=100% \
-        --reverse \
-        --prompt="→ " \
-        --pointer="●" \
-        --color='fg:7,fg+:2,bg+:-1,pointer:2,prompt:2' \
-        --no-info \
-        --no-scrollbar)
+    selected=$(printf '%s\n' "${items[@]}" | fzf "${fzf_params[@]}")
 
     # Если ничего не выбрано (ESC), возвращаем -1
     if [ -z "$selected" ]; then
@@ -885,8 +895,12 @@ configure_autosave() {
     echo ""
 
     local menu_items=("Включить автосохранение" "Отключить автосохранение" "Интервал: 3 минуты" "Интервал: 5 минут" "Интервал: 10 минут" "Свой интервал (ручной ввод)" "Назад")
+
+    # Header с текущими настройками
+    local menu_header="Автосохранение: $current_status | Интервал: $AUTOSAVE_INTERVAL мин"
+
     local choice
-    choice=$(arrow_menu menu_items)
+    choice=$(arrow_menu menu_items "$menu_header")
 
     case $choice in
         0)
@@ -982,8 +996,12 @@ server_manage() {
         echo "Автоперезапуск: $watchdog_status$watchdog_real_status | Автосохранение: $autosave_status$autosave_real_status"
 
         local menu_items=("Запустить" "Остановить" "Консоль" "Автоперезапуск" "Автосохранение" "Удалить" "Назад")
+
+        # Формируем header для fzf с информацией о сервере
+        local menu_header="$name [$status] :$server_port | Перезапуск: $watchdog_status$watchdog_real_status Сохранение: $autosave_status$autosave_real_status"
+
         local choice
-        choice=$(arrow_menu menu_items)
+        choice=$(arrow_menu menu_items "$menu_header")
 
         case $choice in
             0) server_start "$name"; read -p "Enter..." r ;;
@@ -1297,8 +1315,12 @@ main_loop() {
         local srv_count=${#servers[@]}
 
         local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Проверить обновление" "Удалить всё" "Выход")
+
+        # Header с версией и количеством серверов
+        local menu_header="MBSFT v$VERSION | Серверов: $srv_count"
+
         local choice
-        choice=$(arrow_menu menu_items)
+        choice=$(arrow_menu menu_items "$menu_header")
 
         case $choice in
             0) step_deps ;;
