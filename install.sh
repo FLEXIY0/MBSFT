@@ -158,7 +158,7 @@ arrow_menu() {
     # Показываем меню через fzf
     local selected
     selected=$(printf '%s\n' "${items[@]}" | fzf \
-        --height=~100% \
+        --height=100% \
         --reverse \
         --prompt="→ " \
         --pointer="●" \
