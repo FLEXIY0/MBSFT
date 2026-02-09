@@ -141,6 +141,31 @@ CREATED=$(date '+%Y-%m-%d %H:%M')
 EOF
 }
 
+# Функция чтения 1 клавиши (цифра / ESC=back / q=back)
+get_key_or_esc() {
+    old_stty_cfg=$(stty -g)
+    stty raw -echo
+    local key
+    
+    # Ждем 1 байт
+    key=$(dd bs=1 count=1 2>/dev/null)
+    
+    # Если это ESC (\x1b)
+    if [[ "$key" == $'\x1b' ]]; then
+        # Читаем дальше быстро, вдруг это стрелка (еще 2 байта)
+        # Но нам не важно, ESC = назад
+        key="BACK"
+    elif [[ "$key" == "q" ]] || [[ "$key" == "0" ]]; then
+        key="BACK"
+    elif [[ "$key" == $'\x03' ]]; then # Ctrl+C
+        stty "$old_stty_cfg"
+        exit 0
+    fi
+    
+    stty "$old_stty_cfg"
+    echo "$key"
+}
+
 read_server_conf() {
     local dir="$1"
     if [ -f "$dir/.mbsft.conf" ]; then
@@ -217,7 +242,8 @@ make_start_sh() {
 cd "$sv_dir"
 echo "[$name] Запуск через Proot Ubuntu (Java 8)..."
 echo "RAM: $ram, Port: $port, Core: $core"
-proot-distro login ubuntu --bind "$sv_dir:/server" -- java -Xmx$ram -Xms$ram -jar /server/server.jar $args
+# Важно! Сначала заходим в папку внутри proot, потом запускаем java
+proot-distro login ubuntu --bind "$sv_dir:/server" -- bash -c "cd /server && java -Xmx$ram -Xms$ram -jar server.jar $args"
 EOF
     else
         cat > "$sv_dir/start.sh" << EOF
@@ -410,13 +436,16 @@ step_deps() {
         echo "=== Меню зависимостей ==="
         echo "1) Установить всё"
         echo "2) Удалить зависимости"
-        echo "3) Назад"
-        read -p "Выбор: " opt
+        echo "3) Назад / ESC"
+        
+        echo -n "Выбор: "
+        opt=$(get_key_or_esc)
+        
         case $opt in
             1) run_install_deps; break ;;
             2) run_uninstall_deps ;;
-            3) return ;;
-            *) echo "Неверный выбор"; sleep 1 ;;
+            3|"BACK") return ;;
+            *) ;;
         esac
     done
 }
@@ -612,16 +641,18 @@ server_manage() {
         echo "2) Остановить"
         echo "3) Консоль"
         echo "4) Удалить"
-        echo "5) Назад"
+        echo "5) Назад / ESC"
         
-        read -p "Выбор: " opt
+        echo -n "Выбор: "
+        opt=$(get_key_or_esc)
+        
         case $opt in
             1) server_start "$name"; read -p "Enter..." r; ;;
             2) server_stop "$name"; read -p "Enter..." r; ;;
             3) server_console "$name"; ;;
             4) server_delete "$name" && return ;;
-            5) return ;;
-            *) echo "Неверно"; sleep 1;;
+            5|"BACK") return ;;
+            *) ;;
         esac
     done
 }
@@ -635,27 +666,32 @@ list_servers() {
         read -ra servers <<< "$(get_servers)"
         if [ ${#servers[@]} -eq 0 ]; then
             echo "Нет серверов."
-            echo "0) Назад"
-            read -p "Выбор: " idx
-            if [ "$idx" == "0" ]; then return; fi
+            echo -n "Нажми любую клавишу..."
+            get_key_or_esc >/dev/null
+            return
         else 
-            echo "0) Назад"
+            echo "0) Назад / ESC"
             local i=1
             for srv in "${servers[@]}"; do
                 echo "$i) $srv"
                 ((i++))
             done
 
-            read -p "Выбери сервер (номер): " idx
-            if [ "$idx" == "0" ]; then
+            echo -n "Выбери сервер (номер): " 
+            # Здесь get_key_or_esc не подойдет, если серверов > 9. 
+            # Но у нас пока простая реализация.
+            # Если серверов много, лучше read.
+            # Но User просил ESC. Сделаем компромисс:
+            # Для выбора сервера оставим read (чтобы вводить 10, 11...), но ESC будет работать если ввести 'q' или просто Enter.
+            # Сделаем через read -e но с таймаутом сложно.
+            # Лучше просто оставим read для выбора сервера, так как это ввод числа.
+            read -p "" idx
+            
+            if [[ "$idx" == "0" ]] || [[ "$idx" == "q" ]]; then
                 return
             elif [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -le "${#servers[@]}" ] && [ "$idx" -gt 0 ]; then
-                # array is 0-indexed, so idx-1
                 local selected="${servers[$((idx-1))]}"
                 server_manage "$selected"
-            else
-                echo "Неверный номер."
-                sleep 1
             fi
         fi
     done
@@ -680,9 +716,11 @@ step_ssh() {
         echo "4) Сменить пароль"
         echo "5) Починить SSH"
         echo "6) DEBUG sshd"
-        echo "7) Назад"
+        echo "7) Назад / ESC"
 
-        read -p "Выбор: " opt
+        echo -n "Выбор: "
+        opt=$(get_key_or_esc)
+
         case $opt in
             1)
                 echo "=== Настройка SSH ==="
@@ -772,8 +810,8 @@ step_ssh() {
                 sshd
                 read -r
                 ;;
-            7) return ;;
-            *) echo "Неверный выбор"; sleep 1 ;;
+            7|"BACK") return ;;
+            *) ;;
         esac
     done
 }
@@ -911,8 +949,11 @@ main_loop() {
         echo "4) Дашборд"
         echo "5) SSH"
         echo "6) Удалить всё"
-        echo "7) Выход"
-        read -p "Выбор: " choice
+        echo "7) Выход / ESC"
+        
+        echo -n "Выбор: "
+        choice=$(get_key_or_esc)
+        
         case $choice in
             1) step_deps ;;
             2) create_server ;;
@@ -920,8 +961,8 @@ main_loop() {
             4) dashboard ;;
             5) step_ssh ;;
             6) uninstall_all ;;
-            7) exit 0 ;;
-            *) echo "Неверно." ;;
+            7|"BACK") exit 0 ;;
+            *) ;;
         esac
     done
 }
