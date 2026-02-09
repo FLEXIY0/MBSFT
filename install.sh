@@ -94,51 +94,51 @@ fi
 setup_dialog_theme() {
     local rc="$HOME/.mbsft_dialogrc"
     cat > "$rc" << 'THEOF'
-# MBSFT dialog theme — dark + orange
+# MBSFT dialog theme — black + orange borders
 aspect = 0
 separate_widget = ""
 tab_len = 0
 visit_items = ON
-use_shadow = ON
+use_shadow = OFF
 use_colors = ON
-screen_color = (WHITE,BLACK,ON)
-shadow_color = (BLACK,BLACK,ON)
+screen_color = (WHITE,BLACK,OFF)
+shadow_color = (BLACK,BLACK,OFF)
 dialog_color = (WHITE,BLACK,OFF)
-title_color = (YELLOW,BLACK,ON)
-border_color = (WHITE,BLACK,ON)
-border2_color = (WHITE,BLACK,ON)
-button_active_color = (BLACK,YELLOW,ON)
+title_color = (WHITE,BLACK,ON)
+border_color = (RED,BLACK,ON)
+border2_color = (RED,BLACK,ON)
+button_active_color = (BLACK,WHITE,ON)
 button_inactive_color = (WHITE,BLACK,OFF)
-button_key_active_color = (BLACK,YELLOW,ON)
-button_key_inactive_color = (YELLOW,BLACK,OFF)
-button_label_active_color = (BLACK,YELLOW,ON)
+button_key_active_color = (BLACK,WHITE,ON)
+button_key_inactive_color = (WHITE,BLACK,OFF)
+button_label_active_color = (BLACK,WHITE,ON)
 button_label_inactive_color = (WHITE,BLACK,OFF)
 inputbox_color = (WHITE,BLACK,OFF)
-inputbox_border_color = (YELLOW,BLACK,ON)
-inputbox_border2_color = (YELLOW,BLACK,ON)
+inputbox_border_color = (RED,BLACK,ON)
+inputbox_border2_color = (RED,BLACK,ON)
 searchbox_color = (WHITE,BLACK,OFF)
-searchbox_title_color = (YELLOW,BLACK,ON)
-searchbox_border_color = (YELLOW,BLACK,ON)
-searchbox_border2_color = (YELLOW,BLACK,ON)
-position_indicator_color = (YELLOW,BLACK,ON)
+searchbox_title_color = (WHITE,BLACK,ON)
+searchbox_border_color = (RED,BLACK,ON)
+searchbox_border2_color = (RED,BLACK,ON)
+position_indicator_color = (RED,BLACK,ON)
 menubox_color = (WHITE,BLACK,OFF)
-menubox_border_color = (YELLOW,BLACK,ON)
-menubox_border2_color = (YELLOW,BLACK,ON)
+menubox_border_color = (RED,BLACK,ON)
+menubox_border2_color = (RED,BLACK,ON)
 item_color = (WHITE,BLACK,OFF)
-item_selected_color = (BLACK,YELLOW,ON)
-tag_color = (YELLOW,BLACK,OFF)
-tag_selected_color = (BLACK,YELLOW,ON)
-tag_key_color = (YELLOW,BLACK,ON)
-tag_key_selected_color = (BLACK,YELLOW,ON)
+item_selected_color = (BLACK,WHITE,ON)
+tag_color = (WHITE,BLACK,OFF)
+tag_selected_color = (BLACK,WHITE,ON)
+tag_key_color = (WHITE,BLACK,OFF)
+tag_key_selected_color = (BLACK,WHITE,ON)
 check_color = (WHITE,BLACK,OFF)
-check_selected_color = (BLACK,YELLOW,ON)
-uarrow_color = (YELLOW,BLACK,ON)
-darrow_color = (YELLOW,BLACK,ON)
+check_selected_color = (BLACK,WHITE,ON)
+uarrow_color = (RED,BLACK,ON)
+darrow_color = (RED,BLACK,ON)
 itemhelp_color = (WHITE,BLACK,OFF)
-form_active_text_color = (YELLOW,BLACK,ON)
+form_active_text_color = (WHITE,BLACK,ON)
 form_text_color = (WHITE,BLACK,OFF)
 form_item_readonly_color = (WHITE,BLACK,OFF)
-gauge_color = (YELLOW,BLACK,ON)
+gauge_color = (RED,BLACK,ON)
 THEOF
     export DIALOGRC="$rc"
 }
@@ -552,7 +552,7 @@ run_install_deps() {
     [ $java_ok -eq 0 ]             && echo "  java:      OK ($JAVA_BIN)" || echo "  java:      НЕТ"
     echo ""
     echo "Нажми Enter..."
-    read -r
+    read -r </dev/tty
 }
 
 step_deps() {
@@ -690,14 +690,14 @@ EOF
             clear
             echo "=== Запуск $name ==="
             server_start "$name"
-            
+
             echo "Сервер запущен в tmux!"
             echo "Сейчас откроется консоль."
             echo "Чтобы выйти из консоли (оставив сервер работать), нажми: Ctrl+B, затем D"
             echo "Чтобы остановить сервер: напиши 'stop' в консоли."
             echo ""
             echo "Нажми Enter..."
-            read -r
+            read -r </dev/tty
             server_console "$name"
         fi
     fi
@@ -722,7 +722,8 @@ quick_create() {
             install_java
             if ! find_java; then
                 echo "Java не установлена!"
-                read -r
+                echo "Нажми Enter..."
+                read -r </dev/tty
                 return
             fi
         else
@@ -759,7 +760,8 @@ quick_create() {
     if ! wget -O "$sv_dir/server.jar" "$POSEIDON_URL"; then
         rm -f "$sv_dir/server.jar"
         echo "ОШИБКА загрузки!"
-        read -r
+        echo "Нажми Enter..."
+        read -r </dev/tty
         return
     fi
 
@@ -773,7 +775,7 @@ quick_create() {
     patch_server "$sv_dir" "$port"
     echo ""
     echo "Нажми Enter..."
-    read -r
+    read -r </dev/tty
 
     dialog --title "$TITLE" --msgbox "Сервер '$name' готов!\n\nПорт: $port\nУправляй через «Мои серверы»" 9 44
 }
@@ -871,7 +873,7 @@ server_start() {
     # Запуск в новой сессии tmux в фоне (-d)
     # Имя сессии: mbsft-$name
     # Добавляем '; read' чтобы консоль не закрывалась при ошибке/остановке
-    tmux new-session -d -s "mbsft-$name" "cd \"$sv_dir\" && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter, чтобы закрыть это окно...'; read"
+    tmux new-session -d -s "mbsft-$name" "cd \"$sv_dir\" && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter, чтобы закрыть это окно...'; read </dev/tty"
     
     sleep 2 # Даем время на запуск
 
@@ -937,10 +939,27 @@ server_console() {
         return
     fi
     clear
-    echo "Подключение к консоли $name..."
-    echo "Выход (оставить работать): Ctrl+B, затем D"
-    read -t 2
-    tmux attach-session -t "mbsft-$name"
+    echo "=== Консоль сервера: $name ==="
+    echo ""
+    echo "Управление:"
+    echo "  • Выход (оставить работать): Ctrl+B, затем D"
+    echo "  • Остановить сервер: напиши 'stop'"
+    echo ""
+    echo "Подключение через 2 сек..."
+    sleep 2
+    tmux attach-session -t "mbsft-$name" </dev/tty >/dev/tty 2>&1
+
+    # После выхода из консоли
+    clear
+    echo "=== Вышел из консоли $name ==="
+    if is_server_running "$name"; then
+        echo "✓ Сервер продолжает работать в фоне"
+    else
+        echo "✗ Сервер остановлен"
+    fi
+    echo ""
+    echo "Нажми Enter для продолжения..."
+    read -r </dev/tty
 }
 
 server_settings() {
@@ -1159,12 +1178,12 @@ step_ssh() {
             # Убиваем текущие
             pkill sshd
             # Запускаем в foreground с дебагом и выводом в stderr
-            /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022
-            
+            /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022 </dev/tty >/dev/tty 2>&1
+
             echo ""
             echo "Отладка завершена. Перезапускаю обычный SSH..."
             sshd
-            read -t 3
+            sleep 3
             ;;
             
         repair)
@@ -1211,8 +1230,18 @@ step_ssh() {
             dialog --title "Пароль" --yesno "Хочешь задать/сменить пароль для SSH?" 7 40
             if [ $? -eq 0 ]; then
                 clear
-                echo "Введи новый пароль:"
-                passwd
+                echo "=== Установка пароля для SSH ==="
+                echo ""
+                if passwd </dev/tty >/dev/tty 2>&1; then
+                    echo ""
+                    echo "✓ Пароль успешно установлен!"
+                else
+                    echo ""
+                    echo "✗ Ошибка при установке пароля"
+                fi
+                echo ""
+                echo "Нажми Enter для продолжения..."
+                read -r </dev/tty
             fi
             
             dialog --title "Готово" --msgbox "SSH включен и добавлен в автозагрузку!" 6 45
@@ -1286,9 +1315,17 @@ step_ssh() {
             
         passwd)
             clear
-            passwd
-            echo "Пароль изменен. Нажми Enter..."
-            read -r
+            echo "=== Смена пароля SSH ==="
+            if passwd </dev/tty >/dev/tty 2>&1; then
+                echo ""
+                echo "✓ Пароль успешно изменен!"
+            else
+                echo ""
+                echo "✗ Ошибка при смене пароля"
+            fi
+            echo ""
+            echo "Нажми Enter для продолжения..."
+            read -r </dev/tty
             ;;
     esac
 }
