@@ -809,6 +809,23 @@ dashboard() {
             is_server_running "$srv" && stat="RUNNING"
             printf "%-15s %-6s %-10s\n" "$srv" "$port" "$stat"
         done
+        echo ""
+        echo "=== Ссылки для подключения ==="
+        for srv in "${servers[@]}"; do
+             if is_server_running "$srv"; then
+                 local sv_dir="$BASE_DIR/$srv"
+                 local port=$(get_actual_port "$sv_dir")
+                 echo "Minecraft ($srv):"
+                 echo "  $local_ip:$port" 
+                 echo ""
+             fi
+        done
+        if [[ "$ssh_status" == *"ON"* ]]; then
+             local user=$(whoami)
+             echo "SSH (Terminal):"
+             echo "  ssh -p 8022 $user@$local_ip"
+             echo ""
+        fi
     fi
     echo ""
     read -p "Enter..."
