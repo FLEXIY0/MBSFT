@@ -1043,28 +1043,33 @@ server_console() {
         dialog --title "Ошибка" --msgbox "Сервер $name не запущен!" 6 40
         return
     fi
-    clear
-    echo "=== Консоль сервера: $name ==="
-    echo ""
-    echo "Управление:"
-    echo "  • Выход (оставить работать): Ctrl+B, затем D"
-    echo "  • Остановить сервер: напиши 'stop'"
-    echo ""
-    echo "Подключение через 2 сек..."
-    sleep 2
-    tmux attach-session -t "mbsft-$name"
+    # Запускаем tmux в subshell с чистым TTY
+    # (dialog перенаправляет дескрипторы, нужно их восстановить)
+    (
+        exec </dev/tty >/dev/tty 2>&1
+        clear
+        echo "=== Консоль сервера: $name ==="
+        echo ""
+        echo "Управление:"
+        echo "  • Выход (оставить работать): Ctrl+B, затем D"
+        echo "  • Остановить сервер: напиши 'stop'"
+        echo ""
+        echo "Подключаюсь к сессии..."
+        sleep 1
+        tmux attach-session -t "mbsft-$name"
 
-    # После выхода из консоли
-    clear
-    echo "=== Вышел из консоли $name ==="
-    if is_server_running "$name"; then
-        echo "✓ Сервер продолжает работать в фоне"
-    else
-        echo "✗ Сервер остановлен"
-    fi
-    echo ""
-    echo "Нажми Enter для продолжения..."
-    read -r </dev/tty
+        # После выхода из консоли
+        clear
+        echo "=== Вышел из консоли $name ==="
+        if tmux has-session -t "mbsft-$name" 2>/dev/null; then
+            echo "✓ Сервер продолжает работать в фоне"
+        else
+            echo "✗ Сервер остановлен"
+        fi
+        echo ""
+        echo "Нажми Enter для продолжения..."
+        read -r
+    )
 }
 
 server_settings() {
