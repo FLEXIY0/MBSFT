@@ -436,15 +436,14 @@ step_deps() {
         echo "=== Меню зависимостей ==="
         echo "1) Установить всё"
         echo "2) Удалить зависимости"
-        echo "3) Назад / ESC"
-        
-        echo -n "Выбор: "
-        opt=$(get_key_or_esc)
-        
+        echo "0) Назад"
+
+        read -p "Выбор: " opt
+
         case $opt in
             1) run_install_deps; break ;;
             2) run_uninstall_deps ;;
-            3|"BACK") return ;;
+            0|q|"") return ;;
             *) ;;
         esac
     done
@@ -641,17 +640,16 @@ server_manage() {
         echo "2) Остановить"
         echo "3) Консоль"
         echo "4) Удалить"
-        echo "5) Назад / ESC"
-        
-        echo -n "Выбор: "
-        opt=$(get_key_or_esc)
-        
+        echo "0) Назад"
+
+        read -p "Выбор: " opt
+
         case $opt in
             1) server_start "$name"; read -p "Enter..." r; ;;
             2) server_stop "$name"; read -p "Enter..." r; ;;
             3) server_console "$name"; ;;
             4) server_delete "$name" && return ;;
-            5|"BACK") return ;;
+            0|q|"") return ;;
             *) ;;
         esac
     done
@@ -716,10 +714,9 @@ step_ssh() {
         echo "4) Сменить пароль"
         echo "5) Починить SSH"
         echo "6) DEBUG sshd"
-        echo "7) Назад / ESC"
+        echo "0) Назад"
 
-        echo -n "Выбор: "
-        opt=$(get_key_or_esc)
+        read -p "Выбор: " opt
 
         case $opt in
             1)
@@ -810,7 +807,7 @@ step_ssh() {
                 sshd
                 read -r
                 ;;
-            7|"BACK") return ;;
+            0|q|"") return ;;
             *) ;;
         esac
     done
@@ -938,7 +935,7 @@ main_loop() {
     while true; do
         clear
         show_banner
-        
+
         local servers
         read -ra servers <<< "$(get_servers)"
         local srv_count=${#servers[@]}
@@ -949,11 +946,10 @@ main_loop() {
         echo "4) Дашборд"
         echo "5) SSH"
         echo "6) Удалить всё"
-        echo "7) Выход / ESC"
-        
-        echo -n "Выбор: "
-        choice=$(get_key_or_esc)
-        
+        echo "0) Выход"
+
+        read -p "Выбор: " choice
+
         case $choice in
             1) step_deps ;;
             2) create_server ;;
@@ -961,7 +957,7 @@ main_loop() {
             4) dashboard ;;
             5) step_ssh ;;
             6) uninstall_all ;;
-            7|"BACK") exit 0 ;;
+            0|q|"") exit 0 ;;
             *) ;;
         esac
     done
