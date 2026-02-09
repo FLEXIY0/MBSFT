@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="2.5-cli"
+VERSION="2.5-main"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -813,9 +813,9 @@ UPDATE_URL="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh"
 
 self_update() {
     echo "Проверка обновлений..."
-    # Скачиваем скрипт во временную переменную
+    # Скачиваем скрипт во временную переменную (с анти-кеш параметром)
     local remote_content
-    remote_content=$(curl -sL --max-time 3 "$UPDATE_URL")
+    remote_content=$(curl -sL -H 'Cache-Control: no-cache' --max-time 3 "${UPDATE_URL}?v=$(date +%s)")
     
     if [ -z "$remote_content" ]; then
         # Если интернета нет или ошибка — молча пропускаем
