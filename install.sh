@@ -11,7 +11,9 @@
 if [ ! -t 0 ]; then
     TMPSCRIPT=$(mktemp "$HOME/.mbsft_install_XXXXXX.sh")
     cat > "$TMPSCRIPT"
-    exec bash "$TMPSCRIPT" "$@"
+    chmod +x "$TMPSCRIPT"
+    bash "$TMPSCRIPT" "$@" < /dev/tty
+    rm -f "$TMPSCRIPT"
     exit
 fi
 
