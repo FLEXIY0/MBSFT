@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="3.3"
+VERSION="3.4"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -204,6 +204,17 @@ read_server_conf() {
         # Исправляем старый формат CREATED без кавычек (миграция)
         if grep -q '^CREATED=[0-9]' "$dir/.mbsft.conf" && ! grep -q '^CREATED="' "$dir/.mbsft.conf"; then
             sed -i 's/^CREATED=\(.*\)/CREATED="\1"/' "$dir/.mbsft.conf"
+        fi
+
+        # Миграция: добавляем отсутствующие поля для старых конфигов
+        if ! grep -q '^WATCHDOG_ENABLED=' "$dir/.mbsft.conf"; then
+            echo "WATCHDOG_ENABLED=no" >> "$dir/.mbsft.conf"
+        fi
+        if ! grep -q '^AUTOSAVE_ENABLED=' "$dir/.mbsft.conf"; then
+            echo "AUTOSAVE_ENABLED=no" >> "$dir/.mbsft.conf"
+        fi
+        if ! grep -q '^AUTOSAVE_INTERVAL=' "$dir/.mbsft.conf"; then
+            echo "AUTOSAVE_INTERVAL=5" >> "$dir/.mbsft.conf"
         fi
 
         source "$dir/.mbsft.conf"
