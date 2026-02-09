@@ -19,7 +19,7 @@ fi
 
 # Пути
 BASE_DIR="$HOME/mbsft-servers"
-VERSION="2.7.1"
+VERSION="2.8"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -427,6 +427,11 @@ run_install_deps() {
     export DEBIAN_FRONTEND=noninteractive
     pkg update -y && pkg upgrade -y -o Dpkg::Options::="--force-confnew"
     pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh iproute2 net-tools termux-api
+
+    echo ""
+    echo "=== Активация termux-services ==="
+    source "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null || true
+
     install_java
     echo ""
     echo "=== Установка MBSFT в систему ==="
@@ -722,6 +727,10 @@ EOFRUN
 exec svlogd -tt ./main
 EOFLOG
     chmod +x "$service_dir/log/run"
+
+    # Запускаем сервис
+    sleep 1
+    sv up "mbsft-$name-watchdog" 2>/dev/null || true
 }
 
 remove_watchdog_service() {
@@ -797,6 +806,10 @@ EOFRUN
 exec svlogd -tt ./main
 EOFLOG
     chmod +x "$service_dir/log/run"
+
+    # Запускаем сервис
+    sleep 1
+    sv up "mbsft-$name-autosave" 2>/dev/null || true
 }
 
 remove_autosave_service() {
@@ -826,7 +839,7 @@ configure_autosave() {
     echo "Текущий интервал: $AUTOSAVE_INTERVAL мин"
     echo ""
 
-    local menu_items=("Включить" "Отключить" "3 минуты" "5 минут" "10 минут" "Свой интервал" "Назад")
+    local menu_items=("Включить автосохранение" "Отключить автосохранение" "Интервал: 3 минуты" "Интервал: 5 минут" "Интервал: 10 минут" "Свой интервал (ручной ввод)" "Назад")
     local choice
     choice=$(arrow_menu menu_items)
 
@@ -907,7 +920,7 @@ server_manage() {
         echo "=== Управление: $name [$status] :$server_port ==="
         echo "Автоперезапуск: $watchdog_status | Автосохранение: $autosave_status"
 
-        local menu_items=("Запустить" "Остановить" "Консоль" "Скопировать IP" "Автоперезапуск" "Автосохранение" "Удалить" "Назад")
+        local menu_items=("Запустить" "Остановить" "Консоль" "Автоперезапуск" "Автосохранение" "Удалить" "Назад")
         local choice
         choice=$(arrow_menu menu_items)
 
@@ -915,21 +928,10 @@ server_manage() {
             0) server_start "$name"; read -p "Enter..." r ;;
             1) server_stop "$name"; read -p "Enter..." r ;;
             2) server_console "$name" ;;
-            3)
-                local local_ip=$(get_local_ip)
-                echo ""
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                echo "  IP сервера: $local_ip:$server_port"
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                echo ""
-                echo "$local_ip:$server_port" | termux-clipboard-set 2>/dev/null && echo "✓ Скопировано в буфер обмена" || echo "⚠️  Установи termux-api для автокопирования: pkg install termux-api"
-                echo ""
-                read -r
-                ;;
-            4) toggle_watchdog "$name" ;;
-            5) configure_autosave "$name" ;;
-            6) server_delete "$name" && return ;;
-            7|-1) return ;;
+            3) toggle_watchdog "$name" ;;
+            4) configure_autosave "$name" ;;
+            5) server_delete "$name" && return ;;
+            6|-1) return ;;
         esac
     done
 }
