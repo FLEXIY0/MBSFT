@@ -191,6 +191,11 @@ arrow_menu() {
 read_server_conf() {
     local dir="$1"
     if [ -f "$dir/.mbsft.conf" ]; then
+        # Исправляем старый формат CREATED без кавычек (миграция)
+        if grep -q '^CREATED=[0-9]' "$dir/.mbsft.conf" && ! grep -q '^CREATED="' "$dir/.mbsft.conf"; then
+            sed -i 's/^CREATED=\(.*\)/CREATED="\1"/' "$dir/.mbsft.conf"
+        fi
+
         source "$dir/.mbsft.conf"
         # Значения по умолчанию для старых конфигов
         WATCHDOG_ENABLED="${WATCHDOG_ENABLED:-no}"
@@ -912,7 +917,13 @@ server_manage() {
             2) server_console "$name" ;;
             3)
                 local local_ip=$(get_local_ip)
-                echo "$local_ip:$server_port" | termux-clipboard-set 2>/dev/null && echo "✓ Скопировано: $local_ip:$server_port" || echo "Установи termux-api: pkg install termux-api"
+                echo ""
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "  IP сервера: $local_ip:$server_port"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                echo "$local_ip:$server_port" | termux-clipboard-set 2>/dev/null && echo "✓ Скопировано в буфер обмена" || echo "⚠️  Установи termux-api для автокопирования: pkg install termux-api"
+                echo ""
                 read -r
                 ;;
             4) toggle_watchdog "$name" ;;
