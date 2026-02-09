@@ -138,6 +138,9 @@ RAM=$ram
 PORT=$port
 CORE=$core
 CREATED=$(date '+%Y-%m-%d %H:%M')
+WATCHDOG_ENABLED=no
+AUTOSAVE_ENABLED=no
+AUTOSAVE_INTERVAL=5
 EOF
 }
 
@@ -189,9 +192,16 @@ read_server_conf() {
     local dir="$1"
     if [ -f "$dir/.mbsft.conf" ]; then
         source "$dir/.mbsft.conf"
+        # Значения по умолчанию для старых конфигов
+        WATCHDOG_ENABLED="${WATCHDOG_ENABLED:-no}"
+        AUTOSAVE_ENABLED="${AUTOSAVE_ENABLED:-no}"
+        AUTOSAVE_INTERVAL="${AUTOSAVE_INTERVAL:-5}"
     else
         NAME=$(basename "$dir")
         RAM="1G"; PORT="25565"; CORE="unknown"; CREATED="?"
+        WATCHDOG_ENABLED="no"
+        AUTOSAVE_ENABLED="no"
+        AUTOSAVE_INTERVAL="5"
     fi
 }
 
@@ -649,8 +659,10 @@ server_delete() {
     local name="$1"
     read -p "ТОЧНО удалить сервер $name? (y/n): " yn
     if [[ "$yn" != "y" ]]; then return; fi
-    
+
     server_stop "$name" 2>/dev/null
+    remove_watchdog_service "$name" 2>/dev/null
+    remove_autosave_service "$name" 2>/dev/null
     rm -rf "$BASE_DIR/$name"
     if [ -d "$PREFIX/var/service/mbsft-$name" ]; then
         sv down "mbsft-$name" 2>/dev/null
@@ -658,6 +670,215 @@ server_delete() {
     fi
     echo "Удалено."
     read -r
+}
+
+# =====================
+# WATCHDOG SERVICE
+# =====================
+
+setup_watchdog_service() {
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+    local service_dir="$PREFIX/var/service/mbsft-$name-watchdog"
+
+    mkdir -p "$service_dir"
+
+    read_server_conf "$sv_dir"
+
+    cat > "$service_dir/run" << 'EOFRUN'
+#!/data/data/com.termux/files/usr/bin/sh
+exec 2>&1
+
+SERVER_NAME="SERVERNAME_PLACEHOLDER"
+SERVER_DIR="SERVERDIR_PLACEHOLDER"
+RAM="RAM_PLACEHOLDER"
+
+while true; do
+    if ! tmux has-session -t "mbsft-$SERVER_NAME" 2>/dev/null; then
+        echo "[$(date)] Server crashed, restarting in 5 seconds..."
+        sleep 5
+        cd "$SERVER_DIR" || exit 1
+        tmux new-session -d -s "mbsft-$SERVER_NAME" "cd \"$SERVER_DIR\" && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter...'; read"
+        echo "[$(date)] Server restarted"
+    fi
+    sleep 10
+done
+EOFRUN
+
+    sed -i "s|SERVERNAME_PLACEHOLDER|$name|g" "$service_dir/run"
+    sed -i "s|SERVERDIR_PLACEHOLDER|$sv_dir|g" "$service_dir/run"
+    sed -i "s|RAM_PLACEHOLDER|$RAM|g" "$service_dir/run"
+
+    chmod +x "$service_dir/run"
+
+    mkdir -p "$service_dir/log"
+    cat > "$service_dir/log/run" << 'EOFLOG'
+#!/data/data/com.termux/files/usr/bin/sh
+exec svlogd -tt ./main
+EOFLOG
+    chmod +x "$service_dir/log/run"
+}
+
+remove_watchdog_service() {
+    local name="$1"
+    local service_dir="$PREFIX/var/service/mbsft-$name-watchdog"
+
+    if [ -d "$service_dir" ]; then
+        sv down "mbsft-$name-watchdog" 2>/dev/null
+        rm -rf "$service_dir"
+    fi
+}
+
+toggle_watchdog() {
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+
+    read_server_conf "$sv_dir"
+
+    if [ "$WATCHDOG_ENABLED" = "yes" ]; then
+        # Отключаем
+        remove_watchdog_service "$name"
+        sed -i 's/^WATCHDOG_ENABLED=.*/WATCHDOG_ENABLED=no/' "$sv_dir/.mbsft.conf"
+        echo "✓ Автоперезапуск отключен"
+    else
+        # Включаем
+        setup_watchdog_service "$name"
+        sed -i 's/^WATCHDOG_ENABLED=.*/WATCHDOG_ENABLED=yes/' "$sv_dir/.mbsft.conf"
+        sv up "mbsft-$name-watchdog" 2>/dev/null
+        echo "✓ Автоперезапуск включен"
+    fi
+    read -r
+}
+
+# =====================
+# AUTOSAVE SERVICE
+# =====================
+
+setup_autosave_service() {
+    local name="$1"
+    local interval="$2"
+    local sv_dir="$BASE_DIR/$name"
+    local service_dir="$PREFIX/var/service/mbsft-$name-autosave"
+
+    mkdir -p "$service_dir"
+
+    local interval_seconds=$((interval * 60))
+
+    cat > "$service_dir/run" << 'EOFRUN'
+#!/data/data/com.termux/files/usr/bin/sh
+exec 2>&1
+
+SERVER_NAME="SERVERNAME_PLACEHOLDER"
+INTERVAL=INTERVAL_PLACEHOLDER
+
+echo "[$(date)] Autosave service started (interval: ${INTERVAL}s)"
+
+while true; do
+    sleep $INTERVAL
+    if tmux has-session -t "mbsft-$SERVER_NAME" 2>/dev/null; then
+        tmux send-keys -t "mbsft-$SERVER_NAME" "saveall" C-m
+        echo "[$(date)] Sent saveall to $SERVER_NAME"
+    fi
+done
+EOFRUN
+
+    sed -i "s|SERVERNAME_PLACEHOLDER|$name|g" "$service_dir/run"
+    sed -i "s|INTERVAL_PLACEHOLDER|$interval_seconds|g" "$service_dir/run"
+
+    chmod +x "$service_dir/run"
+
+    mkdir -p "$service_dir/log"
+    cat > "$service_dir/log/run" << 'EOFLOG'
+#!/data/data/com.termux/files/usr/bin/sh
+exec svlogd -tt ./main
+EOFLOG
+    chmod +x "$service_dir/log/run"
+}
+
+remove_autosave_service() {
+    local name="$1"
+    local service_dir="$PREFIX/var/service/mbsft-$name-autosave"
+
+    if [ -d "$service_dir" ]; then
+        sv down "mbsft-$name-autosave" 2>/dev/null
+        rm -rf "$service_dir"
+    fi
+}
+
+configure_autosave() {
+    local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+
+    clear
+    show_banner
+    echo "=== Настройка автосохранения: $name ==="
+
+    read_server_conf "$sv_dir"
+
+    local current_status="выкл"
+    [ "$AUTOSAVE_ENABLED" = "yes" ] && current_status="вкл"
+
+    echo "Текущий статус: $current_status"
+    echo "Текущий интервал: $AUTOSAVE_INTERVAL мин"
+    echo ""
+
+    local menu_items=("Включить" "Отключить" "3 минуты" "5 минут" "10 минут" "Свой интервал" "Назад")
+    local choice
+    choice=$(arrow_menu menu_items)
+
+    case $choice in
+        0)
+            # Включить
+            if [ "$AUTOSAVE_ENABLED" != "yes" ]; then
+                setup_autosave_service "$name" "$AUTOSAVE_INTERVAL"
+                sed -i 's/^AUTOSAVE_ENABLED=.*/AUTOSAVE_ENABLED=yes/' "$sv_dir/.mbsft.conf"
+                sv up "mbsft-$name-autosave" 2>/dev/null
+                echo "✓ Автосохранение включено (интервал: $AUTOSAVE_INTERVAL мин)"
+            else
+                echo "Уже включено"
+            fi
+            read -r
+            ;;
+        1)
+            # Отключить
+            remove_autosave_service "$name"
+            sed -i 's/^AUTOSAVE_ENABLED=.*/AUTOSAVE_ENABLED=no/' "$sv_dir/.mbsft.conf"
+            echo "✓ Автосохранение отключено"
+            read -r
+            ;;
+        2|3|4|5)
+            # Установить интервал
+            local new_interval=5
+            case $choice in
+                2) new_interval=3 ;;
+                3) new_interval=5 ;;
+                4) new_interval=10 ;;
+                5)
+                    read -p "Введи интервал в минутах: " new_interval
+                    if ! [[ "$new_interval" =~ ^[0-9]+$ ]] || [ "$new_interval" -lt 1 ]; then
+                        echo "Неверный интервал"
+                        read -r
+                        return
+                    fi
+                    ;;
+            esac
+
+            sed -i "s/^AUTOSAVE_INTERVAL=.*/AUTOSAVE_INTERVAL=$new_interval/" "$sv_dir/.mbsft.conf"
+
+            # Если уже включено - пересоздаем сервис
+            if [ "$AUTOSAVE_ENABLED" = "yes" ]; then
+                remove_autosave_service "$name"
+                setup_autosave_service "$name" "$new_interval"
+                sv up "mbsft-$name-autosave" 2>/dev/null
+            fi
+
+            echo "✓ Интервал установлен: $new_interval мин"
+            read -r
+            ;;
+        6|-1)
+            return
+            ;;
+    esac
 }
 
 server_manage() {
@@ -672,9 +893,17 @@ server_manage() {
         read_server_conf "$SERVER_DIR/$name"
         local server_port="$PORT"
 
-        echo "=== Управление: $name [$status] :$server_port ==="
+        # Статусы сервисов
+        local watchdog_status="выкл"
+        [ "$WATCHDOG_ENABLED" = "yes" ] && watchdog_status="вкл"
 
-        local menu_items=("Запустить" "Остановить" "Консоль" "Скопировать IP" "Удалить" "Назад")
+        local autosave_status="выкл"
+        [ "$AUTOSAVE_ENABLED" = "yes" ] && autosave_status="вкл (${AUTOSAVE_INTERVAL}м)"
+
+        echo "=== Управление: $name [$status] :$server_port ==="
+        echo "Автоперезапуск: $watchdog_status | Автосохранение: $autosave_status"
+
+        local menu_items=("Запустить" "Остановить" "Консоль" "Скопировать IP" "Автоперезапуск" "Автосохранение" "Удалить" "Назад")
         local choice
         choice=$(arrow_menu menu_items)
 
@@ -687,8 +916,10 @@ server_manage() {
                 echo "$local_ip:$server_port" | termux-clipboard-set 2>/dev/null && echo "✓ Скопировано: $local_ip:$server_port" || echo "Установи termux-api: pkg install termux-api"
                 read -r
                 ;;
-            4) server_delete "$name" && return ;;
-            5|-1) return ;;
+            4) toggle_watchdog "$name" ;;
+            5) configure_autosave "$name" ;;
+            6) server_delete "$name" && return ;;
+            7|-1) return ;;
         esac
     done
 }
