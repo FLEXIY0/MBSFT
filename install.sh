@@ -809,7 +809,7 @@ dashboard() {
     read -p "Enter..."
 }
 
-UPDATE_URL="https://raw.githubusercontent.com/FLEXIY0/MBSFT/cli-v2/install.sh"
+UPDATE_URL="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/install.sh"
 
 self_update() {
     echo "Проверка обновлений..."
