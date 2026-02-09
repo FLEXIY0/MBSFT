@@ -141,29 +141,49 @@ CREATED=$(date '+%Y-%m-%d %H:%M')
 EOF
 }
 
-# Функция чтения 1 клавиши (цифра / ESC=back / q=back)
-get_key_or_esc() {
-    old_stty_cfg=$(stty -g)
-    stty raw -echo
+# Простое меню со стрелочками (безопасно для tty)
+arrow_menu() {
+    local -n items=$1
+    local selected=0
     local key
-    
-    # Ждем 1 байт
-    key=$(dd bs=1 count=1 2>/dev/null)
-    
-    # Если это ESC (\x1b)
-    if [[ "$key" == $'\x1b' ]]; then
-        # Читаем дальше быстро, вдруг это стрелка (еще 2 байта)
-        # Но нам не важно, ESC = назад
-        key="BACK"
-    elif [[ "$key" == "q" ]] || [[ "$key" == "0" ]]; then
-        key="BACK"
-    elif [[ "$key" == $'\x03' ]]; then # Ctrl+C
-        stty "$old_stty_cfg"
-        exit 0
-    fi
-    
-    stty "$old_stty_cfg"
-    echo "$key"
+
+    while true; do
+        # Показываем меню
+        for i in "${!items[@]}"; do
+            if [ $i -eq $selected ]; then
+                echo -e "\033[1;32m→ ${items[$i]}\033[0m"  # Зеленый с стрелкой
+            else
+                echo "  ${items[$i]}"
+            fi
+        done
+
+        # Читаем клавишу
+        read -rsn1 key
+
+        if [[ "$key" == $'\x1b' ]]; then  # ESC sequence
+            read -rsn2 -t 0.1 key
+            case "$key" in
+                '[A') # Up arrow
+                    ((selected--))
+                    [ $selected -lt 0 ] && selected=$((${#items[@]}-1))
+                    ;;
+                '[B') # Down arrow
+                    ((selected++))
+                    [ $selected -ge ${#items[@]} ] && selected=0
+                    ;;
+            esac
+            # Очищаем меню (поднимаемся вверх)
+            for ((i=0; i<${#items[@]}; i++)); do
+                echo -ne "\033[1A\033[2K"
+            done
+        elif [[ "$key" == "" ]]; then  # Enter
+            echo "$selected"
+            return 0
+        elif [[ "$key" == "q" ]]; then  # q = quit/back
+            echo "-1"
+            return 1
+        fi
+    done
 }
 
 read_server_conf() {
@@ -436,26 +456,15 @@ step_deps() {
         echo "=== Меню зависимостей ==="
         echo ""
 
-        PS3="Выбор: "
-        select opt in "Установить всё" "Удалить зависимости" "Назад"; do
-            case $opt in
-                "Установить всё")
-                    run_install_deps
-                    break 2
-                    ;;
-                "Удалить зависимости")
-                    run_uninstall_deps
-                    break
-                    ;;
-                "Назад")
-                    return
-                    ;;
-                *)
-                    echo "Неверный выбор"
-                    ;;
-            esac
-            break
-        done
+        local menu_items=("Установить всё" "Удалить зависимости" "Назад")
+        local choice
+        choice=$(arrow_menu menu_items)
+
+        case $choice in
+            0) run_install_deps; return ;;
+            1) run_uninstall_deps ;;
+            2|-1) return ;;
+        esac
     done
 }
 
@@ -648,36 +657,17 @@ server_manage() {
         echo "=== Управление: $name [$status] ==="
         echo ""
 
-        PS3="Выбор: "
-        select opt in "Запустить" "Остановить" "Консоль" "Удалить" "Назад"; do
-            case $opt in
-                "Запустить")
-                    server_start "$name"
-                    read -p "Enter..." r
-                    break
-                    ;;
-                "Остановить")
-                    server_stop "$name"
-                    read -p "Enter..." r
-                    break
-                    ;;
-                "Консоль")
-                    server_console "$name"
-                    break
-                    ;;
-                "Удалить")
-                    server_delete "$name" && return
-                    break
-                    ;;
-                "Назад")
-                    return
-                    ;;
-                *)
-                    echo "Неверный выбор"
-                    ;;
-            esac
-            break
-        done
+        local menu_items=("Запустить" "Остановить" "Консоль" "Удалить" "Назад")
+        local choice
+        choice=$(arrow_menu menu_items)
+
+        case $choice in
+            0) server_start "$name"; read -p "Enter..." r ;;
+            1) server_stop "$name"; read -p "Enter..." r ;;
+            2) server_console "$name" ;;
+            3) server_delete "$name" && return ;;
+            4|-1) return ;;
+        esac
     done
 }
 
@@ -697,18 +687,14 @@ list_servers() {
             local menu_items=("${servers[@]}")
             menu_items+=("Назад")
 
-            PS3="Выбери сервер: "
-            select selected in "${menu_items[@]}"; do
-                if [[ "$selected" == "Назад" ]]; then
-                    return
-                elif [[ -n "$selected" ]]; then
-                    server_manage "$selected"
-                    break
-                else
-                    echo "Неверный выбор"
-                fi
-                break
-            done
+            local choice
+            choice=$(arrow_menu menu_items)
+
+            if [ $choice -eq ${#servers[@]} ] || [ $choice -eq -1 ]; then
+                return
+            else
+                server_manage "${servers[$choice]}"
+            fi
         fi
     done
 }
@@ -728,10 +714,12 @@ step_ssh() {
         echo "=== SSH Управление ==="
         echo ""
 
-        PS3="Выбор: "
-        select opt in "Включить SSH + Автозапуск" "Добавить SSH ключ" "Статус подключения" "Сменить пароль" "Починить SSH" "DEBUG sshd" "Назад"; do
-            case $opt in
-            "Включить SSH + Автозапуск")
+        local menu_items=("Включить SSH + Автозапуск" "Добавить SSH ключ" "Статус подключения" "Сменить пароль" "Починить SSH" "DEBUG sshd" "Назад")
+        local choice
+        choice=$(arrow_menu menu_items)
+
+        case $choice in
+            0)
                 echo "=== Настройка SSH ==="
                 export DEBIAN_FRONTEND=noninteractive
                 pkg install -y -o Dpkg::Options::="--force-confnew" openssh termux-services
@@ -744,52 +732,45 @@ step_ssh() {
                 fi
                 echo "SSH включен."
                 read -r
-                break
                 ;;
-            "Добавить SSH ключ")
+            1)
+                clear
+                show_banner
                 echo "=== Добавить ключ ==="
-                PS3="Выбор ключа: "
-                select kopt in "github (по нику)" "manual (вставка)" "reset (сброс)" "Назад"; do
-                    case $kopt in
-                        "github (по нику)")
-                            read -p "GitHub username: " gh_user
-                            if [ -n "$gh_user" ]; then
-                                curl -fsL "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys" && echo "Ключи добавлены." || echo "Ошибка."
-                            else
-                                 echo "Пустой ник."
-                            fi
-                            read -r
-                            break
-                            ;;
-                        "manual (вставка)")
-                            read -p "Вставь pub-ключ (ssh-rsa ...): " key
-                            if [[ "$key" == ssh-* ]]; then
-                                mkdir -p "$HOME/.ssh"
-                                echo "$key" >> "$HOME/.ssh/authorized_keys"
-                                echo "Добавлено."
-                            else
-                                echo "Не похоже на ключ."
-                            fi
-                            read -r
-                            break
-                            ;;
-                        "reset (сброс)")
-                            echo "" > "$HOME/.ssh/authorized_keys"
-                            echo "Ключи сброшены."
-                            read -r
-                            break
-                            ;;
-                        "Назад")
-                            break
-                            ;;
-                        *)
-                            echo "Неверный выбор"
-                            ;;
-                    esac
-                done
-                break
+                echo ""
+                local key_items=("github (по нику)" "manual (вставка)" "reset (сброс)" "Назад")
+                local kchoice
+                kchoice=$(arrow_menu key_items)
+
+                case $kchoice in
+                    0)
+                        read -p "GitHub username: " gh_user
+                        if [ -n "$gh_user" ]; then
+                            curl -fsL "https://github.com/${gh_user}.keys" >> "$HOME/.ssh/authorized_keys" && echo "Ключи добавлены." || echo "Ошибка."
+                        else
+                             echo "Пустой ник."
+                        fi
+                        read -r
+                        ;;
+                    1)
+                        read -p "Вставь pub-ключ (ssh-rsa ...): " key
+                        if [[ "$key" == ssh-* ]]; then
+                            mkdir -p "$HOME/.ssh"
+                            echo "$key" >> "$HOME/.ssh/authorized_keys"
+                            echo "Добавлено."
+                        else
+                            echo "Не похоже на ключ."
+                        fi
+                        read -r
+                        ;;
+                    2)
+                        echo "" > "$HOME/.ssh/authorized_keys"
+                        echo "Ключи сброшены."
+                        read -r
+                        ;;
+                esac
                 ;;
-            "Статус подключения")
+            2)
                 local user=$(whoami)
                 local local_ip=$(get_local_ip)
                 local ext_ip=$(get_external_ip)
@@ -798,14 +779,12 @@ step_ssh() {
                 echo "External: $ext_ip"
                 echo "Connect: ssh -p 8022 $user@$local_ip"
                 read -r
-                break
                 ;;
-            "Сменить пароль")
+            3)
                 passwd
                 read -r
-                break
                 ;;
-            "Починить SSH")
+            4)
                 echo "Ремонт..."
                 pkill sshd
                 sv-disable sshd 2>/dev/null
@@ -817,26 +796,19 @@ step_ssh() {
                 sshd
                 echo "Готово."
                 read -r
-                break
                 ;;
-            "DEBUG sshd")
+            5)
                 echo "Запускаю sshd в режиме отладки..."
                 echo "Нажми Ctrl+C для выхода."
                 pkill sshd
                 /data/data/com.termux/files/usr/bin/sshd -D -d -e -p 8022
                 sshd
                 read -r
-                break
                 ;;
-            "Назад")
+            6|-1)
                 return
                 ;;
-            *)
-                echo "Неверный выбор"
-                ;;
-            esac
-            break
-        done
+        esac
     done
 }
 
@@ -968,42 +940,19 @@ main_loop() {
         local srv_count=${#servers[@]}
 
         echo ""
-        PS3="Выбор: "
-        select choice in "Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Удалить всё" "Выход"; do
-            case $choice in
-                "Установить зависимости")
-                    step_deps
-                    break
-                    ;;
-                "Создать сервер")
-                    create_server
-                    break
-                    ;;
-                "Мои серверы ($srv_count)")
-                    list_servers
-                    break
-                    ;;
-                "Дашборд")
-                    dashboard
-                    break
-                    ;;
-                "SSH")
-                    step_ssh
-                    break
-                    ;;
-                "Удалить всё")
-                    uninstall_all
-                    break
-                    ;;
-                "Выход")
-                    exit 0
-                    ;;
-                *)
-                    echo "Неверный выбор"
-                    ;;
-            esac
-            break
-        done
+        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Удалить всё" "Выход")
+        local choice
+        choice=$(arrow_menu menu_items)
+
+        case $choice in
+            0) step_deps ;;
+            1) create_server ;;
+            2) list_servers ;;
+            3) dashboard ;;
+            4) step_ssh ;;
+            5) uninstall_all ;;
+            6|-1) exit 0 ;;
+        esac
     done
 }
 
