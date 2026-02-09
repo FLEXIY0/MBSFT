@@ -453,7 +453,6 @@ step_deps() {
         show_banner
         check_deps_status
         echo "=== Меню зависимостей ==="
-        echo ""
 
         local menu_items=("Установить всё" "Удалить зависимости" "Назад")
         local choice
@@ -668,10 +667,14 @@ server_manage() {
         show_banner
         local status="СТОП"
         is_server_running "$name" && status="РАБОТАЕТ"
-        echo "=== Управление: $name [$status] ==="
-        echo ""
 
-        local menu_items=("Запустить" "Остановить" "Консоль" "Удалить" "Назад")
+        # Получаем порт сервера
+        read_server_conf "$SERVER_DIR/$name"
+        local server_port="$PORT"
+
+        echo "=== Управление: $name [$status] :$server_port ==="
+
+        local menu_items=("Запустить" "Остановить" "Консоль" "Скопировать IP" "Удалить" "Назад")
         local choice
         choice=$(arrow_menu menu_items)
 
@@ -679,8 +682,13 @@ server_manage() {
             0) server_start "$name"; read -p "Enter..." r ;;
             1) server_stop "$name"; read -p "Enter..." r ;;
             2) server_console "$name" ;;
-            3) server_delete "$name" && return ;;
-            4|-1) return ;;
+            3)
+                local local_ip=$(get_local_ip)
+                echo "$local_ip:$server_port" | termux-clipboard-set 2>/dev/null && echo "✓ Скопировано: $local_ip:$server_port" || echo "Установи termux-api: pkg install termux-api"
+                read -r
+                ;;
+            4) server_delete "$name" && return ;;
+            5|-1) return ;;
         esac
     done
 }
@@ -697,8 +705,15 @@ list_servers() {
             read -p "Нажми Enter..."
             return
         else
-            echo ""
-            local menu_items=("${servers[@]}")
+            local menu_items=()
+            local server_names=()
+
+            # Формируем пункты меню с портами
+            for srv in "${servers[@]}"; do
+                read_server_conf "$SERVER_DIR/$srv"
+                menu_items+=("$srv :$PORT")
+                server_names+=("$srv")
+            done
             menu_items+=("Назад")
 
             local choice
@@ -707,7 +722,7 @@ list_servers() {
             if [ $choice -eq ${#servers[@]} ] || [ $choice -eq -1 ]; then
                 return
             else
-                server_manage "${servers[$choice]}"
+                server_manage "${server_names[$choice]}"
             fi
         fi
     done
@@ -726,7 +741,6 @@ step_ssh() {
         clear
         show_banner
         echo "=== SSH Управление ==="
-        echo ""
 
         local menu_items=("Включить SSH + Автозапуск" "Добавить SSH ключ" "Статус подключения" "Сменить пароль" "Починить SSH" "DEBUG sshd" "Назад")
         local choice
@@ -751,7 +765,6 @@ step_ssh() {
                 clear
                 show_banner
                 echo "=== Добавить ключ ==="
-                echo ""
                 local key_items=("github (по нику)" "manual (вставка)" "reset (сброс)" "Назад")
                 local kchoice
                 kchoice=$(arrow_menu key_items)
@@ -953,7 +966,6 @@ main_loop() {
         read -ra servers <<< "$(get_servers)"
         local srv_count=${#servers[@]}
 
-        echo ""
         local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Удалить всё" "Выход")
         local choice
         choice=$(arrow_menu menu_items)
