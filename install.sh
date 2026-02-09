@@ -76,10 +76,22 @@ find_java() {
 # =====================
 # Bootstrap: dialog
 # =====================
+
+# Починка зависшего dpkg (если есть проблема с openssl.cnf или другими конфигами)
+fix_dpkg() {
+    if dpkg --configure -a 2>&1 | grep -q "end of file on stdin"; then
+        echo "[MBSFT] Обнаружена проблема с dpkg, исправляю..."
+        export DEBIAN_FRONTEND=noninteractive
+        export APT_LISTCHANGES_FRONTEND=none
+        dpkg --configure -a --force-confnew 2>/dev/null || true
+    fi
+}
+
 if ! command -v dialog &>/dev/null; then
     echo "[MBSFT] Устанавливаю dialog..."
-    pkg install -y dialog 2>/dev/null || {
-        apt update -y 2>/dev/null && apt install -y dialog 2>/dev/null
+    fix_dpkg
+    pkg install -y -o Dpkg::Options::="--force-confnew" dialog 2>/dev/null || {
+        apt update -y -o Dpkg::Options::="--force-confnew" 2>/dev/null && apt install -y -o Dpkg::Options::="--force-confnew" dialog 2>/dev/null
     }
 fi
 
@@ -347,7 +359,7 @@ optimize_mirrors() {
     
     # Нужен curl для теста
     if ! command -v curl &>/dev/null; then
-        pkg install -y curl &>/dev/null || return 1
+        pkg install -y -o Dpkg::Options::="--force-confnew" curl &>/dev/null || return 1
     fi
 
     echo "Тест скорости (время отклика):"
@@ -356,12 +368,12 @@ optimize_mirrors() {
         # Замеряем время скачивания Release файла (head request или маленький файл)
         local time
         time=$(curl -o /dev/null -s -w "%{time_total}" --connect-timeout 2 --max-time 3 "$url/dists/stable/Release")
-        
+
         if [ -n "$time" ] && [ "$time" != "0.000000" ]; then
             echo "  $url -> ${time}s"
-            # Сравниваем float (через bc или awk, но awk надежнее)
+            # Сравниваем float через awk
             local is_faster
-            is_faster=$(echo "$time < $best_time" | awk '{print ($1)}')
+            is_faster=$(awk -v t="$time" -v b="$best_time" 'BEGIN {print (t < b)}')
             if [ "$is_faster" -eq 1 ]; then
                 best_time=$time
                 best_mirror=$url
@@ -380,9 +392,9 @@ optimize_mirrors() {
         cp "$PREFIX/etc/apt/sources.list" "$PREFIX/etc/apt/sources.list.bak"
         # Запись
         echo "deb $best_mirror stable main" > "$PREFIX/etc/apt/sources.list"
-        
+
         echo "Обновление списков..."
-        pkg update -y
+        pkg update -y -o Dpkg::Options::="--force-confnew"
     else
         echo "Не удалось выбрать зеркало, оставляем текущее."
     fi
@@ -398,20 +410,24 @@ install_java() {
     echo "Будет установлена Ubuntu (~80MB) и OpenJDK 8 внутри неё."
     echo ""
 
+    # Автоматические ответы для dpkg
+    export DEBIAN_FRONTEND=noninteractive
+    export APT_LISTCHANGES_FRONTEND=none
+
     # 1. Установка proot-distro
     if ! command -v proot-distro &>/dev/null; then
         echo "[1/4] Установка proot-distro..."
-        
+
         # Сначала пробуем установить так
-        pkg install -y proot-distro
-        
+        pkg install -y -o Dpkg::Options::="--force-confnew" proot-distro
+
         # Если не вышло — ищем зеркала
         if [ $? -ne 0 ]; then
             echo ""
             echo "ОШИБКА загрузки. Пробую найти быстрые зеркала..."
             optimize_mirrors
-            pkg install -y proot-distro
-            
+            pkg install -y -o Dpkg::Options::="--force-confnew" proot-distro
+
             if [ $? -ne 0 ]; then
                 echo ""
                 echo "ОШИБКА: Не удалось установить proot-distro даже с новыми зеркалами!"
@@ -524,19 +540,28 @@ run_install_deps() {
     clear
     echo "=== Установка зависимостей ==="
     echo ""
-    pkg update -y && pkg upgrade -y
+
+    # Автоматические ответы для dpkg (решает проблему с openssl.cnf и другими конфигами)
+    export DEBIAN_FRONTEND=noninteractive
+    export APT_LISTCHANGES_FRONTEND=none
+
+    # Исправляем зависший dpkg если есть
+    echo "Проверка системы пакетов..."
+    fix_dpkg
+
+    pkg update -y && pkg upgrade -y -o Dpkg::Options::="--force-confnew"
 
     echo ""
     echo "--- Основные пакеты ---"
-    pkg install -y wget tmux termux-services openssh
+    pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh
 
     echo ""
     echo "--- Сетевые утилиты ---"
-    pkg install -y iproute2
-    pkg install -y net-tools
+    pkg install -y -o Dpkg::Options::="--force-confnew" iproute2
+    pkg install -y -o Dpkg::Options::="--force-confnew" net-tools
     if ! command -v ifconfig &>/dev/null; then
         echo "ВНИМАНИЕ: net-tools не установился, пробую ещё раз..."
-        apt install -y net-tools
+        apt install -y -o Dpkg::Options::="--force-confnew" net-tools
     fi
 
     echo ""
@@ -716,9 +741,14 @@ quick_create() {
             clear
             echo "=== Установка зависимостей ==="
             echo ""
-            pkg update -y && pkg upgrade -y
-            pkg install -y tur-repo 2>/dev/null
-            pkg install -y wget tmux termux-services openssh iproute2 net-tools
+
+            # Автоматические ответы для dpkg
+            export DEBIAN_FRONTEND=noninteractive
+            export APT_LISTCHANGES_FRONTEND=none
+
+            pkg update -y -o Dpkg::Options::="--force-confnew" && pkg upgrade -y -o Dpkg::Options::="--force-confnew"
+            pkg install -y -o Dpkg::Options::="--force-confnew" tur-repo 2>/dev/null
+            pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh iproute2 net-tools
             install_java
             if ! find_java; then
                 echo "Java не установлена!"
@@ -1214,8 +1244,13 @@ step_ssh() {
         enable)
             clear
             echo "=== Настройка SSH ==="
+
+            # Автоматические ответы для dpkg
+            export DEBIAN_FRONTEND=noninteractive
+            export APT_LISTCHANGES_FRONTEND=none
+
             # Установка ssh и сервисов
-            pkg install -y openssh termux-services
+            pkg install -y -o Dpkg::Options::="--force-confnew" openssh termux-services
             
             # Включаем сервис sshd
             echo "Активация сервиса sshd..."
