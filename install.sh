@@ -369,6 +369,12 @@ run_install_deps() {
     pkg install -y -o Dpkg::Options::="--force-confnew" wget tmux termux-services openssh iproute2 net-tools
     install_java
     echo ""
+    echo "=== Установка MBSFT в систему ==="
+    cp "$0" "$PREFIX/bin/mbsft"
+    chmod +x "$PREFIX/bin/mbsft"
+    echo "Теперь можно запускать командой: mbsft"
+
+    echo ""
     echo "Нажми Enter..."
     read -r
 }
