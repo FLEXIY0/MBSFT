@@ -137,7 +137,7 @@ NAME=$name
 RAM=$ram
 PORT=$port
 CORE=$core
-CREATED=$(date '+%Y-%m-%d %H:%M')
+CREATED="$(date '+%Y-%m-%d %H:%M')"
 WATCHDOG_ENABLED=no
 AUTOSAVE_ENABLED=no
 AUTOSAVE_INTERVAL=5
@@ -744,8 +744,7 @@ toggle_watchdog() {
         # Включаем
         setup_watchdog_service "$name"
         sed -i 's/^WATCHDOG_ENABLED=.*/WATCHDOG_ENABLED=yes/' "$sv_dir/.mbsft.conf"
-        sv up "mbsft-$name-watchdog" 2>/dev/null
-        echo "✓ Автоперезапуск включен"
+        echo "✓ Автоперезапуск включен (запустится в течение 5 секунд)"
     fi
     read -r
 }
@@ -832,8 +831,8 @@ configure_autosave() {
             if [ "$AUTOSAVE_ENABLED" != "yes" ]; then
                 setup_autosave_service "$name" "$AUTOSAVE_INTERVAL"
                 sed -i 's/^AUTOSAVE_ENABLED=.*/AUTOSAVE_ENABLED=yes/' "$sv_dir/.mbsft.conf"
-                sv up "mbsft-$name-autosave" 2>/dev/null
                 echo "✓ Автосохранение включено (интервал: $AUTOSAVE_INTERVAL мин)"
+                echo "  Запустится в течение 5 секунд"
             else
                 echo "Уже включено"
             fi
@@ -869,10 +868,10 @@ configure_autosave() {
             if [ "$AUTOSAVE_ENABLED" = "yes" ]; then
                 remove_autosave_service "$name"
                 setup_autosave_service "$name" "$new_interval"
-                sv up "mbsft-$name-autosave" 2>/dev/null
+                echo "✓ Интервал установлен: $new_interval мин (перезапускается...)"
+            else
+                echo "✓ Интервал установлен: $new_interval мин"
             fi
-
-            echo "✓ Интервал установлен: $new_interval мин"
             read -r
             ;;
         6|-1)
