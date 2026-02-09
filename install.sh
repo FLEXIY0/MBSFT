@@ -784,10 +784,56 @@ dashboard() {
     read -p "Enter..."
 }
 
+UPDATE_URL="https://raw.githubusercontent.com/FLEXIY0/MBSFT/cli-v2/install.sh"
+
+self_update() {
+    echo "Проверка обновлений..."
+    # Скачиваем скрипт во временную переменную
+    local remote_content
+    remote_content=$(curl -sL --max-time 3 "$UPDATE_URL")
+    
+    if [ -z "$remote_content" ]; then
+        # Если интернета нет или ошибка — молча пропускаем
+        return
+    fi
+    
+    # Парсим версию (ищем строку VERSION="...")
+    local remote_ver
+    remote_ver=$(echo "$remote_content" | grep '^VERSION=' | head -1 | cut -d'"' -f2)
+    
+    # Если версии отличаются и remote_ver не пустая
+    if [ -n "$remote_ver" ] && [ "$remote_ver" != "$VERSION" ]; then
+        echo ""
+        echo ">>> Доступна новая версия: $remote_ver (Текущая: $VERSION)"
+        read -p "Обновить сейчас? (y/n): " yn
+        if [[ "$yn" == "y" ]]; then
+            echo "Обновление..."
+            # Перезаписываем текущий запущенный файл
+            echo "$remote_content" > "$0"
+            chmod +x "$0"
+            
+            # Если мы не в bin, но mbsft есть в bin — обновим и его
+            if [ "$0" != "$PREFIX/bin/mbsft" ] && [ -f "$PREFIX/bin/mbsft" ]; then
+                echo "$remote_content" > "$PREFIX/bin/mbsft"
+                chmod +x "$PREFIX/bin/mbsft"
+                echo "Системная команда также обновлена."
+            fi
+            
+            echo "Перезапуск..."
+            echo ""
+            # Перезапускаем скрипт
+            exec bash "$0" "$@"
+        fi
+    fi
+}
+
 # =====================
 # Main Loop
 # =====================
 main_loop() {
+    # Проверка обновлений при старте
+    self_update
+
     while true; do
         clear
         echo "=== MBSFT v${VERSION} CLI ==="
