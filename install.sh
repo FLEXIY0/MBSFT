@@ -889,7 +889,7 @@ server_manage() {
         is_server_running "$name" && status="РАБОТАЕТ"
 
         # Получаем порт сервера
-        read_server_conf "$SERVER_DIR/$name"
+        read_server_conf "$BASE_DIR/$name"
         local server_port="$PORT"
 
         # Статусы сервисов
@@ -940,7 +940,7 @@ list_servers() {
 
             # Формируем пункты меню с портами
             for srv in "${servers[@]}"; do
-                read_server_conf "$SERVER_DIR/$srv"
+                read_server_conf "$BASE_DIR/$srv"
                 menu_items+=("$srv :$PORT")
                 server_names+=("$srv")
             done
