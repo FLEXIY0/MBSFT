@@ -532,46 +532,52 @@ server_delete() {
 }
 
 # =====================
-# WATCHDOG SERVICE (systemd user service)
+# WATCHDOG SERVICE (nohup background process)
 # =====================
 
 setup_watchdog_service() {
     local name="$1"
+    local sv_dir="$BASE_DIR/$name"
+    local pid_file="$sv_dir/.watchdog.pid"
+    local log_file="$sv_dir/.watchdog.log"
 
-    # Create systemd user directory
-    mkdir -p "$HOME/.config/systemd/user"
-
-    # Install template if not exists
-    if [ ! -f "$HOME/.config/systemd/user/mbsft-watchdog@.service" ]; then
-        cat > "$HOME/.config/systemd/user/mbsft-watchdog@.service" << 'EOF'
-[Unit]
-Description=MBSFT Watchdog for %i
-After=default.target
-
-[Service]
-Type=simple
-Restart=always
-RestartSec=10
-ExecStart=/usr/bin/bash -c 'while true; do if ! tmux has-session -t "mbsft-%i" 2>/dev/null; then echo "[$(date)] Server %i crashed, restarting..."; sleep 5; cd "%h/mbsft-servers/%i" || exit 1; tmux new-session -d -s "mbsft-%i" "cd \"%h/mbsft-servers/%i\" && ./start.sh; echo \"\"; echo \"=== SERVER STOPPED ===\""; echo "[$(date)] Server %i restarted"; fi; sleep 10; done'
-Environment="HOME=%h"
-
-[Install]
-WantedBy=default.target
-EOF
+    # Если уже запущен - останавливаем
+    if [ -f "$pid_file" ]; then
+        local old_pid=$(cat "$pid_file")
+        if kill -0 "$old_pid" 2>/dev/null; then
+             kill "$old_pid" 2>/dev/null
+        fi
+        rm -f "$pid_file"
     fi
 
-    # Start and enable service
-    systemctl --user daemon-reload
-    systemctl --user enable "mbsft-watchdog@$name.service" 2>/dev/null
-    systemctl --user start "mbsft-watchdog@$name.service"
+    # Запускаем фоновый процесс мониторинга
+    nohup bash -c "
+        while true; do
+            if ! tmux has-session -t 'mbsft-$name' 2>/dev/null; then
+                echo \"[\$(date)] Server crashed or stopped unexpectedly, restarting in 5 seconds...\"
+                sleep 5
+                cd '$sv_dir' || exit 1
+                tmux new-session -d -s 'mbsft-$name' \"cd '$sv_dir' && ./start.sh; echo ''; echo '=== СЕРВЕР ОСТАНОВЛЕН ==='; echo 'Нажми Enter...'; read\"
+                echo \"[\$(date)] Server restarted\"
+            fi
+            sleep 10
+        done
+    " > "$log_file" 2>&1 &
 
-    echo "✓ Автоперезапуск включен (systemd)"
+    local pid=$!
+    echo $pid > "$pid_file"
+    echo "✓ Автоперезапуск включен (PID: $pid)"
 }
 
 remove_watchdog_service() {
     local name="$1"
-    systemctl --user stop "mbsft-watchdog@$name.service" 2>/dev/null
-    systemctl --user disable "mbsft-watchdog@$name.service" 2>/dev/null
+    local pid_file="$BASE_DIR/$name/.watchdog.pid"
+
+    if [ -f "$pid_file" ]; then
+        local pid=$(cat "$pid_file")
+        kill "$pid" 2>/dev/null
+        rm -f "$pid_file"
+    fi
     echo "✓ Автоперезапуск отключен"
 }
 
@@ -594,51 +600,53 @@ toggle_watchdog() {
 }
 
 # =====================
-# AUTOSAVE SERVICE (systemd user service)
+# AUTOSAVE SERVICE (nohup background process)
 # =====================
 
 setup_autosave_service() {
     local name="$1"
     local interval="$2"
     local sv_dir="$BASE_DIR/$name"
+    local pid_file="$sv_dir/.autosave.pid"
+    local log_file="$sv_dir/.autosave.log"
 
-    # Store interval in file (read by systemd service)
-    echo "$interval" > "$sv_dir/.autosave_interval"
+    local interval_seconds=$((interval * 60))
 
-    # Create systemd user directory
-    mkdir -p "$HOME/.config/systemd/user"
-
-    # Install template if not exists
-    if [ ! -f "$HOME/.config/systemd/user/mbsft-autosave@.service" ]; then
-        cat > "$HOME/.config/systemd/user/mbsft-autosave@.service" << 'EOF'
-[Unit]
-Description=MBSFT Autosave for %i
-After=default.target
-
-[Service]
-Type=simple
-Restart=always
-RestartSec=10
-ExecStart=/usr/bin/bash -c 'INTERVAL_FILE="%h/mbsft-servers/%i/.autosave_interval"; INTERVAL=5; [ -f "$INTERVAL_FILE" ] && INTERVAL=$(cat "$INTERVAL_FILE"); INTERVAL_SECONDS=$((INTERVAL * 60)); echo "[$(date)] Autosave started (interval: ${INTERVAL_SECONDS}s)"; while true; do sleep $INTERVAL_SECONDS; if tmux has-session -t "mbsft-%i" 2>/dev/null; then tmux send-keys -t "mbsft-%i" "save-all" C-m; echo "[$(date)] Sent save-all to %i"; fi; done'
-Environment="HOME=%h"
-
-[Install]
-WantedBy=default.target
-EOF
+    # Если уже запущен - останавливаем
+    if [ -f "$pid_file" ]; then
+        local old_pid=$(cat "$pid_file")
+        if kill -0 "$old_pid" 2>/dev/null; then
+             kill "$old_pid" 2>/dev/null
+        fi
+        rm -f "$pid_file"
     fi
 
-    # Start and enable service
-    systemctl --user daemon-reload
-    systemctl --user enable "mbsft-autosave@$name.service" 2>/dev/null
-    systemctl --user start "mbsft-autosave@$name.service"
+    # Запускаем фоновый процесс автосохранения
+    nohup bash -c "
+        echo \"[\$(date)] Autosave service started (interval: ${interval_seconds}s)\"
+        while true; do
+            sleep $interval_seconds
+            if tmux has-session -t 'mbsft-$name' 2>/dev/null; then
+                tmux send-keys -t 'mbsft-$name' 'save-all' C-m
+                echo \"[\$(date)] Sent save-all to mbsft-$name\"
+            fi
+        done
+    " > "$log_file" 2>&1 &
 
-    echo "✓ Автосохранение включено (интервал: $interval мин, systemd)"
+    local pid=$!
+    echo $pid > "$pid_file"
+    echo "✓ Автосохранение включено (интервал: $interval мин, PID: $pid)"
 }
 
 remove_autosave_service() {
     local name="$1"
-    systemctl --user stop "mbsft-autosave@$name.service" 2>/dev/null
-    systemctl --user disable "mbsft-autosave@$name.service" 2>/dev/null
+    local pid_file="$BASE_DIR/$name/.autosave.pid"
+
+    if [ -f "$pid_file" ]; then
+        local pid=$(cat "$pid_file")
+        kill "$pid" 2>/dev/null
+        rm -f "$pid_file"
+    fi
     echo "✓ Автосохранение отключено"
 }
 
@@ -660,22 +668,46 @@ show_server_debug() {
     fi
     echo ""
 
-    # 2. systemd service status
-    echo "--- systemd Status ---"
-    echo "Watchdog:"
-    systemctl --user status "mbsft-watchdog@$name.service" --no-pager -l 2>/dev/null || echo "  Not running"
-    echo ""
-    echo "Autosave:"
-    systemctl --user status "mbsft-autosave@$name.service" --no-pager -l 2>/dev/null || echo "  Not running"
+    # 2. Process status
+    echo "--- Процессы (PID) ---"
+    if [ -f "$sv_dir/.watchdog.pid" ]; then
+        local wpid=$(cat "$sv_dir/.watchdog.pid")
+        if kill -0 "$wpid" 2>/dev/null; then
+             echo "Watchdog: RUNNING (PID $wpid)"
+        else
+             echo "Watchdog: DIED (PID $wpid file exists)"
+        fi
+    else
+        echo "Watchdog: STOPPED"
+    fi
+
+    if [ -f "$sv_dir/.autosave.pid" ]; then
+        local apid=$(cat "$sv_dir/.autosave.pid")
+        if kill -0 "$apid" 2>/dev/null; then
+             echo "Autosave: RUNNING (PID $apid)"
+        else
+             echo "Autosave: DIED (PID $apid file exists)"
+        fi
+    else
+        echo "Autosave: STOPPED"
+    fi
     echo ""
 
-    # 3. Journal logs (last 10 lines)
-    echo "--- Логи (последние 10) ---"
-    echo "Watchdog:"
-    journalctl --user -u "mbsft-watchdog@$name.service" -n 10 --no-pager 2>/dev/null || echo "  (нет логов)"
+    # 3. Logs (last 10 lines)
+    echo "--- Логи (последние 10 строк) ---"
+    echo "Watchdog (.watchdog.log):"
+    if [ -f "$sv_dir/.watchdog.log" ]; then
+        tail -n 10 "$sv_dir/.watchdog.log"
+    else
+        echo "  (нет логов)"
+    fi
     echo ""
-    echo "Autosave:"
-    journalctl --user -u "mbsft-autosave@$name.service" -n 10 --no-pager 2>/dev/null || echo "  (нет логов)"
+    echo "Autosave (.autosave.log):"
+    if [ -f "$sv_dir/.autosave.log" ]; then
+        tail -n 10 "$sv_dir/.autosave.log"
+    else
+        echo "  (нет логов)"
+    fi
     echo ""
 
     read -p "Нажми Enter..."
@@ -764,12 +796,12 @@ server_manage() {
         read_server_conf "$BASE_DIR/$name"
         local server_port="$PORT"
 
-        # Статусы сервисов (проверка через systemd)
+        # Статусы сервисов (проверка через PID)
         local watchdog_status="выкл"
         local watchdog_real_status=""
         if [ "$WATCHDOG_ENABLED" = "yes" ]; then
             watchdog_status="вкл"
-            if systemctl --user is-active --quiet "mbsft-watchdog@$name.service"; then
+            if [ -f "$BASE_DIR/$name/.watchdog.pid" ] && kill -0 $(cat "$BASE_DIR/$name/.watchdog.pid") 2>/dev/null; then
                 watchdog_real_status=" ✓"
             else
                 watchdog_real_status=" ✗"
@@ -780,7 +812,7 @@ server_manage() {
         local autosave_real_status=""
         if [ "$AUTOSAVE_ENABLED" = "yes" ]; then
             autosave_status="вкл (${AUTOSAVE_INTERVAL}м)"
-            if systemctl --user is-active --quiet "mbsft-autosave@$name.service"; then
+            if [ -f "$BASE_DIR/$name/.autosave.pid" ] && kill -0 $(cat "$BASE_DIR/$name/.autosave.pid") 2>/dev/null; then
                 autosave_real_status=" ✓"
             else
                 autosave_real_status=" ✗"
