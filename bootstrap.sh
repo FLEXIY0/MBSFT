@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="5.0.2"
+VERSION="5.0.3"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -96,8 +96,13 @@ if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
         
         for url in "${MIRRORS[@]}"; do
             echo "Trying: $url"
-            # -f: fail on HTTP errors, -L: follow redirects, -C -: resume, --retry: retry transient errors
-            if curl -fL -C - --connect-timeout 10 --max-time 600 --retry 1 -o "$CACHE_FILE.part" "$url"; then
+            echo "  (Min speed: 1MB/s, Tolerance: 4s)"
+            # -f: fail on HTTP errors
+            # -L: follow redirects
+            # -C -: resume
+            # --speed-limit 1000000: abort if speed < 1MB/s
+            # --speed-time 4: ...for 4 seconds
+            if curl -fL -C - --connect-timeout 10 --speed-limit 1000000 --speed-time 4 --max-time 1200 --retry 1 -o "$CACHE_FILE.part" "$url"; then
                 
                 # 1. Check size (min 5MB to avoid broken downloads/error pages)
                 FSIZE=$(wc -c < "$CACHE_FILE.part")
