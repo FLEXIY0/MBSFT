@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.4.1"
+VERSION="4.5.0"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -596,8 +596,25 @@ create_server() {
         echo "Скачиваю Reindev..."
         wget -O "$sv_dir/server.jar" "https://github.com/FLEXIY0/MBSFT/releases/download/servers/reindev-server-2.9_03.jar" || { echo "Ошибка загрузки"; return; }
     elif [ "$core_choice" == "foxloader" ]; then
-        echo "Скачиваю FoxLoader..."
-        wget -O "$sv_dir/server.jar" "https://github.com/FLEXIY0/MBSFT/releases/download/servers/foxloader-2.0-alpha39-server.jar" || { echo "Ошибка загрузки"; return; }
+        local arch=$(uname -m)
+        if [ "$arch" == "aarch64" ] || [ "$arch" == "arm64" ]; then
+            # ARM64: скачиваем готовый пакет со всеми библиотеками (64MB)
+            echo "Скачиваю FoxLoader package (ARM64 с библиотеками)..."
+            local tmp_pkg=$(mktemp)
+            if wget --show-progress -O "$tmp_pkg" "https://github.com/FLEXIY0/MBSFT/releases/download/servers/foxloader-package.tar.gz"; then
+                echo "Распаковка..."
+                tar -xzf "$tmp_pkg" -C "$sv_dir"
+                rm -f "$tmp_pkg"
+                echo "✓ FoxLoader package установлен"
+            else
+                echo "✗ Ошибка загрузки package"
+                return
+            fi
+        else
+            # x86_64: скачиваем только jar
+            echo "Скачиваю FoxLoader..."
+            wget -O "$sv_dir/server.jar" "https://github.com/FLEXIY0/MBSFT/releases/download/servers/foxloader-2.0-alpha39-server.jar" || { echo "Ошибка загрузки"; return; }
+        fi
     elif [ "$core_choice" == "custom" ]; then
         echo "Закинь server.jar в папку $sv_dir/ и нажми Enter"
         read -r
