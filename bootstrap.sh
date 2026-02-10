@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ============================================
-# MBSFT v4.0 Bootstrap Script
+# MBSFT v4.1 Bootstrap Script
 # One-time setup for proot Ubuntu environment
 # ============================================
 
