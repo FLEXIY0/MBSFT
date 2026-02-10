@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="5.0.0"
+VERSION="5.0.1"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
