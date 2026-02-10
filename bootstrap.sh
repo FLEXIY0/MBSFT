@@ -53,17 +53,35 @@ echo "=== Step 2/5: Installing Ubuntu container ==="
 if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
     echo "Creating Ubuntu container (this may take a few minutes)..."
 
+    # Detect CPU architecture
+    local arch=$(uname -m)
+    local ubuntu_arch=""
+    case "$arch" in
+        aarch64|arm64)
+            ubuntu_arch="aarch64"
+            ;;
+        armv7l|armv8l|arm)
+            ubuntu_arch="arm"
+            ;;
+        *)
+            echo "⚠ Unsupported architecture: $arch (using default)"
+            ubuntu_arch="aarch64"
+            ;;
+    esac
+
+    echo "Detected architecture: $arch → ubuntu-questing-$ubuntu_arch"
+
     # Fast download via CDN mirrors (avoid slow cloud-images.ubuntu.com)
     echo "Attempting fast download from CDN mirrors..."
 
     local alt_urls=(
-        "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
-        "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
-        "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+        "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
+        "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
+        "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
     )
 
     local cache_dir="$PREFIX/var/lib/proot-distro/dlcache"
-    local tarball="$cache_dir/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+    local tarball="$cache_dir/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
 
     mkdir -p "$cache_dir"
 
