@@ -38,29 +38,19 @@ if [[ "$yn" != "y" ]]; then
 fi
 
 echo ""
-echo "=== Step 1/7: Optimizing Termux mirrors ==="
-echo "Configuring fast mirrors for better download speeds..."
-
-# Backup original sources
-if [ ! -f "$PREFIX/etc/apt/sources.list.bak" ]; then
-    cp "$PREFIX/etc/apt/sources.list" "$PREFIX/etc/apt/sources.list.bak"
-fi
-
-# Set fast mirrors (Russia/Asia optimized)
-cat > "$PREFIX/etc/apt/sources.list" << 'EOF'
-# Fast mirrors for Russia/Asia
-deb https://mirrors.grimler.se/termux/termux-main stable main
-deb https://mirrors.bfsu.edu.cn/termux/termux-main stable main
-deb https://mirrors.tuna.tsinghua.edu.cn/termux/termux-main stable main
-EOF
-
-echo "✓ Termux mirrors optimized"
+echo "=== Step 1/5: Updating Termux packages ==="
+echo "Running pkg update..."
+pkg update -y || { echo "Error: pkg update failed"; exit 1; }
 
 echo ""
-echo "=== Step 2/7: Installing proot-distro ==="
+echo "Upgrading packages (including proot-distro)..."
+pkg upgrade -y || { echo "Error: pkg upgrade failed"; exit 1; }
+echo "✓ Packages upgraded"
+
+echo ""
+echo "=== Step 2/5: Installing proot-distro ==="
 if ! command -v proot-distro &>/dev/null; then
     echo "Installing proot-distro package..."
-    pkg update -y || { echo "Error: pkg update failed"; exit 1; }
     pkg install -y proot-distro || { echo "Error: proot-distro install failed"; exit 1; }
     echo "✓ proot-distro installed"
 else
@@ -68,129 +58,21 @@ else
 fi
 
 echo ""
-echo "=== Step 3/7: Installing Ubuntu container ==="
-ROOTFS_DIR="$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO"
-
-if [ ! -d "$ROOTFS_DIR" ]; then
-    echo "Creating Ubuntu container (direct extraction method)..."
-
-    # Detect CPU architecture
-    arch=$(uname -m)
-    ubuntu_arch=""
-    case "$arch" in
-        aarch64|arm64)
-            ubuntu_arch="aarch64"
-            ;;
-        armv7l|armv8l|arm)
-            ubuntu_arch="arm"
-            ;;
-        *)
-            echo "⚠ Unsupported architecture: $arch (using default)"
-            ubuntu_arch="aarch64"
-            ;;
-    esac
-
-    echo "Detected architecture: $arch → ubuntu-questing-$ubuntu_arch"
-
-    # RADICAL APPROACH: Download + extract rootfs DIRECTLY (bypass proot-distro install)
-    # This is 10x faster than proot-distro's mirror selection
-    echo "Downloading rootfs from fast CDN..."
-
-    cdn_urls=(
-        "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
-        "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
-        "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
-    )
-
-    TEMP_TARBALL="$PREFIX/tmp/ubuntu-rootfs.tar.xz"
-    mkdir -p "$PREFIX/tmp"
-
-    # Download from CDN mirrors
-    downloaded=false
-    for cdn_url in "${cdn_urls[@]}"; do
-        mirror_name=$(echo "$cdn_url" | cut -d'/' -f3)
-        echo "  Downloading from: $mirror_name"
-
-        if timeout 120 wget --show-progress --progress=bar:force -O "$TEMP_TARBALL" "$cdn_url" 2>&1; then
-            size=$(stat -c%s "$TEMP_TARBALL" 2>/dev/null || echo 0)
-            if [ "$size" -gt 40000000 ]; then
-                echo "  ✓ Downloaded $(($size / 1024 / 1024))MB"
-                downloaded=true
-                break
-            else
-                echo "  ✗ File too small, trying next..."
-                rm -f "$TEMP_TARBALL"
-            fi
-        else
-            echo "  ✗ Failed, trying next..."
-            rm -f "$TEMP_TARBALL"
-        fi
-    done
-
-    if [ "$downloaded" = false ]; then
-        echo "Error: All CDN mirrors failed"
-        exit 1
-    fi
-
-    # Extract rootfs directly (bypass proot-distro)
-    echo "Extracting rootfs (this may take 1-2 minutes)..."
-    mkdir -p "$ROOTFS_DIR"
-
-    # Extract with progress (strip first directory level)
-    if pv "$TEMP_TARBALL" 2>/dev/null | tar -xJf - -C "$ROOTFS_DIR" --strip-components=1 2>/dev/null; then
-        echo "  ✓ Extracted with progress"
-    else
-        # Fallback without pv
-        tar -xJf "$TEMP_TARBALL" -C "$ROOTFS_DIR" --strip-components=1 || {
-            echo "Error: Extraction failed"
-            rm -rf "$ROOTFS_DIR"
-            rm -f "$TEMP_TARBALL"
-            exit 1
-        }
-    fi
-
-    # Cleanup
-    rm -f "$TEMP_TARBALL"
-
-    echo "✓ Ubuntu container installed (direct method)"
+echo "=== Step 3/5: Installing Ubuntu container ==="
+if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
+    echo "Installing Ubuntu (this may take a few minutes)..."
+    proot-distro install $DISTRO || { echo "Error: Ubuntu installation failed"; exit 1; }
+    echo "✓ Ubuntu container installed"
 else
     echo "✓ Ubuntu container already exists"
 fi
 
 echo ""
-echo "=== Step 4/7: Installing dependencies inside Ubuntu ==="
+echo "=== Step 4/5: Installing dependencies inside Ubuntu ==="
 echo "Installing Java, tmux, SSH, fzf..."
 proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
-
-    # Use Yandex mirror for Russia (fastest)
-    # Only base repository - no updates/security for faster setup
-    echo 'Setting up Yandex mirror (base only)...'
-    cat > /etc/apt/sources.list << 'EOF'
-deb http://mirror.yandex.ru/ubuntu jammy main restricted universe multiverse
-EOF
-
-    # apt update with retry
-    for i in 1 2 3; do
-        echo \"apt update attempt \$i/3...\"
-        if apt update -y; then
-            break
-        fi
-        [ \$i -lt 3 ] && sleep 2
-    done
-
-    # apt install with retry
-    for i in 1 2 3; do
-        echo \"apt install attempt \$i/3...\"
-        if apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc; then
-            echo '✓ All packages installed'
-            exit 0
-        fi
-        [ \$i -lt 3 ] && sleep 3
-    done
-
-    echo 'Error: Failed to install packages after 3 attempts'
-    exit 1
+    apt update -y && apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc
 " || { echo "Error: Package installation failed"; exit 1; }
 echo "✓ Dependencies installed"
 
