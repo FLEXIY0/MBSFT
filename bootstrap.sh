@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="4.3"
+VERSION="4.4"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -52,7 +52,60 @@ echo ""
 echo "=== Step 2/5: Installing Ubuntu container ==="
 if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
     echo "Creating Ubuntu container (this may take a few minutes)..."
-    proot-distro install $DISTRO || { echo "Error: Ubuntu installation failed"; exit 1; }
+
+    # Fast download via CDN mirrors (avoid slow cloud-images.ubuntu.com)
+    echo "Attempting fast download from CDN mirrors..."
+
+    local alt_urls=(
+        "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-jammy-aarch64-pd-v4.30.1.tar.xz"
+        "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-jammy-aarch64-pd-v4.30.1.tar.xz"
+        "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-jammy-aarch64-pd-v4.30.1.tar.xz"
+    )
+
+    local cache_dir="$PREFIX/var/lib/proot-distro/dlcache"
+    local tarball="$cache_dir/ubuntu-jammy-aarch64-pd-v4.30.1.tar.xz"
+
+    mkdir -p "$cache_dir"
+
+    # Try downloading from fast CDN mirrors
+    local downloaded=false
+    for url in "${alt_urls[@]}"; do
+        local mirror_name=$(echo $url | cut -d'/' -f3)
+        echo "  Trying: $mirror_name"
+
+        if timeout 120 wget --show-progress --progress=bar:force -O "$tarball" "$url" 2>&1; then
+            # Check file size (should be > 40MB)
+            local size=$(stat -c%s "$tarball" 2>/dev/null || echo 0)
+            if [ "$size" -gt 40000000 ]; then
+                echo "  ✓ Downloaded successfully ($(($size / 1024 / 1024))MB)"
+                downloaded=true
+                break
+            else
+                echo "  ✗ File corrupted, trying next mirror..."
+                rm -f "$tarball"
+            fi
+        else
+            echo "  ✗ Timeout or error, trying next mirror..."
+            rm -f "$tarball"
+        fi
+    done
+
+    # Install Ubuntu (will use cached file if downloaded)
+    if [ "$downloaded" = true ]; then
+        echo "Installing Ubuntu from cache..."
+        proot-distro install $DISTRO || {
+            echo "Cache install failed, trying default method..."
+            rm -f "$tarball"
+            downloaded=false
+        }
+    fi
+
+    # Fallback to default if CDN mirrors failed
+    if [ "$downloaded" = false ]; then
+        echo "Using default proot-distro download (may be slow)..."
+        proot-distro install $DISTRO || { echo "Error: Ubuntu installation failed"; exit 1; }
+    fi
+
     echo "✓ Ubuntu container installed"
 else
     echo "✓ Ubuntu container already exists"
