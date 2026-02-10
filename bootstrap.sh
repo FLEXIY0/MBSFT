@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="4.0"
+VERSION="4.1"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -92,7 +92,7 @@ deb \$best_mirror jammy-updates main restricted universe multiverse
 deb \$best_mirror jammy-security main restricted universe multiverse
 EOF
     fi
-" 2>/dev/null
+"
 echo "✓ Mirrors configured"
 
 echo ""
@@ -121,7 +121,7 @@ proot-distro login $DISTRO -- bash -c "
     sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
     sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
     echo 'Port 2222' >> /etc/ssh/sshd_config
-" 2>/dev/null
+"
 echo "✓ SSH configured (port 2222)"
 
 echo ""
