@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.3.1"
+VERSION="4.4.0"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -254,6 +254,88 @@ patch_server() {
     fi
 }
 
+# Функция для установки Box64 (эмулятор x86_64 на ARM64)
+install_box64() {
+    echo "=== Установка Box64 ==="
+
+    # Проверяем если уже установлен
+    if command -v box64 &>/dev/null; then
+        echo "✓ Box64 уже установлен: $(box64 -v 2>&1 | head -1)"
+        return 0
+    fi
+
+    echo "Добавляю репозиторий Box64..."
+
+    # Добавляем репозиторий
+    if ! wget -q https://ryanfortner.github.io/box64-debs/box64.list -O /etc/apt/sources.list.d/box64.list; then
+        echo "✗ Ошибка добавления репозитория Box64"
+        return 1
+    fi
+
+    # Добавляем GPG ключ
+    echo "Добавляю GPG ключ..."
+    if ! wget -qO- https://ryanfortner.github.io/box64-debs/KEY.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/box64-debs-archive-keyring.gpg; then
+        echo "✗ Ошибка добавления GPG ключа"
+        return 1
+    fi
+
+    # Обновляем и устанавливаем
+    echo "Устанавливаю Box64..."
+    apt update -qq
+    if apt install -y box64-android; then
+        echo "✓ Box64 установлен: $(box64 -v 2>&1 | head -1)"
+        return 0
+    else
+        echo "✗ Ошибка установки Box64"
+        return 1
+    fi
+}
+
+# Функция для установки x86_64 Java (для Box64)
+install_x86_64_java() {
+    local java_dir="/opt/jdk-x86_64"
+
+    echo "=== Установка x86_64 Java 8 ==="
+
+    # Проверяем если уже установлена
+    if [ -f "$java_dir/bin/java" ]; then
+        echo "✓ x86_64 Java уже установлена: $java_dir"
+        return 0
+    fi
+
+    echo "Скачиваю OpenJDK 8 x86_64..."
+
+    # URL для Adoptium OpenJDK 8 x86_64 Linux
+    local jdk_url="https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u432-b06/OpenJDK8U-jre_x64_linux_hotspot_8u432b06.tar.gz"
+    local tmp_dir=$(mktemp -d)
+
+    if ! wget --show-progress -O "$tmp_dir/jdk.tar.gz" "$jdk_url"; then
+        echo "✗ Ошибка скачивания Java"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    echo "Распаковка..."
+    mkdir -p /opt
+    tar -xzf "$tmp_dir/jdk.tar.gz" -C "$tmp_dir"
+
+    # Находим распакованную директорию
+    local extracted=$(find "$tmp_dir" -maxdepth 1 -type d -name "jdk8*" -o -name "openlogic*" -o -name "*jre*" | head -1)
+
+    if [ -z "$extracted" ]; then
+        echo "✗ Ошибка распаковки"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    mv "$extracted" "$java_dir"
+    rm -rf "$tmp_dir"
+
+    echo "✓ x86_64 Java установлена: $java_dir"
+    echo "  Версия: $($java_dir/bin/java -version 2>&1 | head -1)"
+    return 0
+}
+
 # Функция для установки ARM64 LWJGL2 нативных библиотек (костыль для FoxLoader)
 setup_arm64_lwjgl() {
     local sv_dir="$1"
@@ -318,54 +400,47 @@ make_start_sh() {
         # FoxLoader требует согласие EULA при первом запуске
         echo "eula=true" > "$sv_dir/eula.txt"
 
-        # Для ARM64 создаём скрипт с workaround
+        # Для ARM64 используем Box64 + x86_64 Java
         local arch=$(uname -m)
         if [ "$arch" == "aarch64" ] || [ "$arch" == "arm64" ]; then
-            setup_arm64_lwjgl "$sv_dir"
+            echo "=== FoxLoader на ARM64 - используем Box64 ==="
 
-            # Создаём start.sh с автоматической заменой библиотек перед запуском
-            cat > "$sv_dir/start.sh" << 'EOFARM'
+            # Устанавливаем Box64
+            if ! install_box64; then
+                echo "✗ Не удалось установить Box64"
+                echo "  FoxLoader не будет работать на ARM64 без Box64"
+                read -r
+                return 1
+            fi
+
+            # Устанавливаем x86_64 Java
+            if ! install_x86_64_java; then
+                echo "✗ Не удалось установить x86_64 Java"
+                read -r
+                return 1
+            fi
+
+            local java_x86="/opt/jdk-x86_64/bin/java"
+
+            # Создаём start.sh с Box64
+            cat > "$sv_dir/start.sh" << EOF
 #!/usr/bin/bash
 cd "$sv_dir"
 echo "[$name] Starting server..."
 echo "RAM: $ram, Port: $port, Core: $core"
+echo "[Box64] Запускаю через эмуляцию x86_64..."
 
-# ARM64 LWJGL2 Workaround - заменяем библиотеки перед каждым запуском
-if [ -d "natives-arm64" ]; then
-    echo "[ARM64] Применяю LWJGL2 workaround..."
-
-    # Ждём пока библиотеки скачаются (первый запуск)
-    if [ ! -d "libraries" ]; then
-        echo "[ARM64] Первый запуск - даю FoxLoader скачать библиотеки..."
-        timeout 15s java -Xmx$ram -Xms$ram -jar server.jar $args &
-        SERVER_PID=$!
-        sleep 10
-        kill $SERVER_PID 2>/dev/null
-        wait $SERVER_PID 2>/dev/null
-        echo "[ARM64] Библиотеки скачаны, заменяю на ARM64 версии..."
-    fi
-
-    # Заменяем x86_64 библиотеки на ARM64
-    find libraries -type f -name "liblwjgl*.so" -exec cp natives-arm64/liblwjgl.so {} \; 2>/dev/null
-    find libraries -type f -name "libopenal*.so" -exec cp natives-arm64/libopenal.so {} \; 2>/dev/null
-    find /tmp -type f -name "liblwjgl*.so" -user $(whoami) -exec cp natives-arm64/liblwjgl.so {} \; 2>/dev/null
-    find /tmp -type f -name "libopenal*.so" -user $(whoami) -exec cp natives-arm64/libopenal.so {} \; 2>/dev/null
-
-    echo "[ARM64] Workaround применён, запускаю сервер..."
-fi
-
-java -Xmx$ram -Xms$ram -jar server.jar $args
-EOFARM
-            # Подставляем переменные
-            sed -i "s/\$sv_dir/$sv_dir/g" "$sv_dir/start.sh"
-            sed -i "s/\$name/$name/g" "$sv_dir/start.sh"
-            sed -i "s/\$ram/$ram/g" "$sv_dir/start.sh"
-            sed -i "s/\$port/$port/g" "$sv_dir/start.sh"
-            sed -i "s/\$core/$core/g" "$sv_dir/start.sh"
-            sed -i "s/\$args/$args/g" "$sv_dir/start.sh"
+# Запускаем x86_64 Java через Box64
+box64 $java_x86 -Xmx$ram -Xms$ram -jar server.jar $args
+EOF
             chmod +x "$sv_dir/start.sh"
-            echo "✓ Создан start.sh с ARM64 workaround"
-            return
+            echo "✓ Создан start.sh с Box64 (x86_64 эмуляция)"
+            echo ""
+            echo "ВНИМАНИЕ: Box64 добавляет overhead производительности"
+            echo "Альтернатива: используй Reindev (нативная поддержка ARM64)"
+            echo ""
+            read -p "Нажми Enter для продолжения..."
+            return 0
         fi
     fi
 
