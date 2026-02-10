@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.2.2"
+VERSION="4.3.0"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -254,11 +254,67 @@ patch_server() {
     fi
 }
 
+# Функция для установки ARM64 LWJGL2 нативных библиотек (костыль для FoxLoader)
+setup_arm64_lwjgl() {
+    local sv_dir="$1"
+    local natives_dir="$sv_dir/natives-arm64"
+
+    # Проверяем архитектуру
+    local arch=$(uname -m)
+    if [ "$arch" != "aarch64" ] && [ "$arch" != "arm64" ]; then
+        return 0  # Не ARM64, пропускаем
+    fi
+
+    # Если уже установлено, пропускаем
+    if [ -f "$natives_dir/liblwjgl.so" ] && [ -f "$natives_dir/libopenal.so" ]; then
+        echo "ARM64 LWJGL2 natives уже установлены"
+        return 0
+    fi
+
+    echo "Обнаружена ARM64 архитектура, устанавливаю LWJGL2 ARM64 natives..."
+    mkdir -p "$natives_dir"
+
+    # Скачиваем ARM64 нативные библиотеки из GitHub
+    local repo_url="https://github.com/JJTech0130/Aarch64-Natives/raw/master"
+
+    echo "Скачиваю liblwjgl.so..."
+    if ! wget -q -O "$natives_dir/liblwjgl.so" "$repo_url/liblwjgl.so"; then
+        echo "ОШИБКА: Не удалось скачать liblwjgl.so"
+        return 1
+    fi
+
+    echo "Скачиваю libopenal.so..."
+    if ! wget -q -O "$natives_dir/libopenal.so" "$repo_url/libopenal.so"; then
+        echo "ОШИБКА: Не удалось скачать libopenal.so"
+        return 1
+    fi
+
+    # Делаем библиотеки исполняемыми
+    chmod +x "$natives_dir/liblwjgl.so" "$natives_dir/libopenal.so"
+
+    echo "✓ ARM64 LWJGL2 natives установлены в $natives_dir"
+    return 0
+}
+
 make_start_sh() {
     local sv_dir="$1" name="$2" ram="$3" port="$4" core="$5"
     local args="nogui"
+    local java_opts=""
+
     if [ "$core" == "foxloader" ]; then
         args="--server"
+        # FoxLoader требует согласие EULA при первом запуске
+        echo "eula=true" > "$sv_dir/eula.txt"
+
+        # Для ARM64 устанавливаем нативные библиотеки и добавляем путь к ним
+        local arch=$(uname -m)
+        if [ "$arch" == "aarch64" ] || [ "$arch" == "arm64" ]; then
+            setup_arm64_lwjgl "$sv_dir"
+            if [ -d "$sv_dir/natives-arm64" ]; then
+                java_opts="-Djava.library.path=$sv_dir/natives-arm64"
+                echo "Используется ARM64 LWJGL2 workaround"
+            fi
+        fi
     fi
 
     # Ubuntu proot - простой bash скрипт
@@ -267,7 +323,7 @@ make_start_sh() {
 cd "$sv_dir"
 echo "[$name] Starting server..."
 echo "RAM: $ram, Port: $port, Core: $core"
-java -Xmx$ram -Xms$ram -jar server.jar $args
+java $java_opts -Xmx$ram -Xms$ram -jar server.jar $args
 EOF
     chmod +x "$sv_dir/start.sh"
 }
