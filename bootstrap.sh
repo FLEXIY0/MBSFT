@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="4.1"
+VERSION="4.2"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -59,11 +59,11 @@ else
 fi
 
 echo ""
-echo "=== Step 3/5: Setting up fast mirrors in Ubuntu ==="
+echo "=== Step 3/7: Setting up fast mirrors in Ubuntu ==="
 proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
 
-    # Test mirrors and select fastest
+    # Test mirrors and select fastest (with increased timeout)
     echo 'Testing Ubuntu mirrors...'
     mirrors=(
         'http://mirror.yandex.ru/ubuntu'
@@ -73,35 +73,59 @@ proot-distro login $DISTRO -- bash -c "
     )
 
     best_mirror=''
-    best_time=10
+    best_time=999
 
     for mirror in \"\${mirrors[@]}\"; do
-        time=\$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 3 --max-time 5 \"\$mirror/dists/\" 2>/dev/null || echo '10')
-        if (( \$(echo \"\$time < \$best_time\" | bc -l) )); then
+        echo -n \"  Testing \$mirror... \"
+        time=\$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 5 --max-time 10 \"\$mirror/dists/jammy/Release\" 2>/dev/null || echo '999')
+        echo \"\${time}s\"
+
+        if (( \$(echo \"\$time < \$best_time && \$time < 10\" | bc -l) )); then
             best_time=\$time
             best_mirror=\$mirror
         fi
-        echo \"  \$mirror -> \${time}s\"
     done
 
-    if [ -n \"\$best_mirror\" ]; then
-        echo \"Using fastest mirror: \$best_mirror\"
+    if [ -n \"\$best_mirror\" ] && [ \"\$best_mirror\" != \"http://archive.ubuntu.com/ubuntu\" ]; then
+        echo \"✓ Using fastest mirror: \$best_mirror (\${best_time}s)\"
         cat > /etc/apt/sources.list << EOF
 deb \$best_mirror jammy main restricted universe multiverse
 deb \$best_mirror jammy-updates main restricted universe multiverse
 deb \$best_mirror jammy-security main restricted universe multiverse
 EOF
+    else
+        echo '✓ Using default Ubuntu mirror'
     fi
 "
 echo "✓ Mirrors configured"
 
 echo ""
-echo "=== Step 4/5: Installing dependencies inside Ubuntu ==="
+echo "=== Step 4/7: Installing dependencies inside Ubuntu ==="
 echo "Installing Java, tmux, SSH, fzf..."
 proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
-    apt update -y
-    apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc
+
+    # apt update with retry
+    for i in 1 2 3; do
+        echo \"apt update attempt \$i/3...\"
+        if apt update -y; then
+            break
+        fi
+        [ \$i -lt 3 ] && sleep 2
+    done
+
+    # apt install with retry
+    for i in 1 2 3; do
+        echo \"apt install attempt \$i/3...\"
+        if apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc; then
+            echo '✓ All packages installed'
+            exit 0
+        fi
+        [ \$i -lt 3 ] && sleep 3
+    done
+
+    echo 'Error: Failed to install packages after 3 attempts'
+    exit 1
 " || { echo "Error: Package installation failed"; exit 1; }
 echo "✓ Dependencies installed"
 
