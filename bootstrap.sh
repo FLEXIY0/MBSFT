@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="4.4"
+VERSION="4.5"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -38,7 +38,26 @@ if [[ "$yn" != "y" ]]; then
 fi
 
 echo ""
-echo "=== Step 1/5: Installing proot-distro ==="
+echo "=== Step 1/7: Optimizing Termux mirrors ==="
+echo "Configuring fast mirrors for better download speeds..."
+
+# Backup original sources
+if [ ! -f "$PREFIX/etc/apt/sources.list.bak" ]; then
+    cp "$PREFIX/etc/apt/sources.list" "$PREFIX/etc/apt/sources.list.bak"
+fi
+
+# Set fast mirrors (Russia/Asia optimized)
+cat > "$PREFIX/etc/apt/sources.list" << 'EOF'
+# Fast mirrors for Russia/Asia
+deb https://mirrors.grimler.se/termux/termux-main stable main
+deb https://mirrors.bfsu.edu.cn/termux/termux-main stable main
+deb https://mirrors.tuna.tsinghua.edu.cn/termux/termux-main stable main
+EOF
+
+echo "✓ Termux mirrors optimized"
+
+echo ""
+echo "=== Step 2/7: Installing proot-distro ==="
 if ! command -v proot-distro &>/dev/null; then
     echo "Installing proot-distro package..."
     pkg update -y || { echo "Error: pkg update failed"; exit 1; }
@@ -49,7 +68,7 @@ else
 fi
 
 echo ""
-echo "=== Step 2/5: Installing Ubuntu container ==="
+echo "=== Step 3/7: Installing Ubuntu container ==="
 if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
     echo "Creating Ubuntu container (this may take a few minutes)..."
 
@@ -130,7 +149,7 @@ else
 fi
 
 echo ""
-echo "=== Step 3/6: Installing dependencies inside Ubuntu ==="
+echo "=== Step 4/7: Installing dependencies inside Ubuntu ==="
 echo "Installing Java, tmux, SSH, fzf..."
 proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
