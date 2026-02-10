@@ -154,7 +154,7 @@ echo "=== Step 4/5: Installing dependencies inside Ubuntu ==="
 echo "Installing Java, tmux, SSH, fzf, and IDE libs..."
 proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
-    apt update -y && apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc libatomic1 tar gzip ca-certificates procps
+    apt update -y && apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc libatomic1 tar gzip ca-certificates procps build-essential python3 python3-pip libstdc++6 libgcc1 libgomp1 libitm1
 " || { echo "Error: Package installation failed"; exit 1; }
 echo "✓ Dependencies installed"
 

@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.0.2"
+VERSION="4.1.0"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -1011,6 +1011,440 @@ step_ssh() {
     done
 }
 
+install_code_server() {
+    while true; do
+        clear
+        show_banner
+        echo "=== Web IDE (code-server) ==="
+        echo ""
+        echo "Code-Server — это VS Code в браузере."
+        echo "Работает через веб-интерфейс на настраиваемом порту."
+        echo ""
+
+        # Проверяем установлен ли code-server
+        local cs_installed="НЕТ"
+        local cs_running="СТОП"
+
+        if command -v code-server &>/dev/null; then
+            cs_installed="ДА"
+            cs_version=$(code-server --version 2>/dev/null | head -1 || echo "unknown")
+        fi
+
+        # Проверяем запущен ли code-server
+        if pgrep -f "code-server" >/dev/null 2>&1; then
+            cs_running="РАБОТАЕТ"
+        fi
+
+        # Определяем текущий порт из конфига
+        local cs_port="8080"
+        if [ -f "$HOME/.config/code-server/config.yaml" ]; then
+            cs_port=$(grep "bind-addr:" "$HOME/.config/code-server/config.yaml" | cut -d: -f3 || echo "8080")
+            [ -z "$cs_port" ] && cs_port="8080"
+        fi
+
+        echo "Установлен: $cs_installed"
+        [ "$cs_installed" != "НЕТ" ] && echo "Версия: $cs_version"
+        echo "Статус: $cs_running"
+        echo "Порт: $cs_port"
+        echo ""
+
+        local menu_items=()
+
+        if [ "$cs_installed" = "НЕТ" ]; then
+            menu_items+=("Установить code-server")
+        else
+            menu_items+=("Переустановить")
+        fi
+
+        menu_items+=("Запустить" "Остановить" "Настроить пароль" "Настроить порт" "Удалить" "Статус подключения" "Назад")
+
+        local choice
+        choice=$(arrow_menu menu_items)
+
+        case $choice in
+            0)
+                # Установка/переустановка
+                clear
+                echo "=== Установка Code-Server ==="
+                echo ""
+
+                # Определяем архитектуру
+                local arch=$(uname -m)
+                local cs_arch=""
+
+                case "$arch" in
+                    aarch64|arm64)
+                        cs_arch="arm64"
+                        ;;
+                    x86_64|amd64)
+                        cs_arch="amd64"
+                        ;;
+                    armv7l)
+                        cs_arch="armv7"
+                        ;;
+                    *)
+                        echo "✗ Неподдерживаемая архитектура: $arch"
+                        read -r
+                        continue
+                        ;;
+                esac
+
+                echo "Архитектура: $arch -> code-server $cs_arch"
+                echo ""
+
+                # Получаем последнюю версию из GitHub API
+                echo "Получаю последнюю версию..."
+                local latest_version
+                latest_version=$(curl -sL https://api.github.com/repos/coder/code-server/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+
+                if [ -z "$latest_version" ]; then
+                    echo "✗ Не удалось получить версию. Используем v4.96.2"
+                    latest_version="v4.96.2"
+                fi
+
+                echo "Последняя версия: $latest_version"
+                echo ""
+
+                # Формируем URL для скачивания
+                local download_url="https://github.com/coder/code-server/releases/download/${latest_version}/code-server-${latest_version#v}-linux-${cs_arch}.tar.gz"
+
+                echo "Скачиваю code-server..."
+                echo "URL: $download_url"
+                echo ""
+
+                # Создаем временную директорию
+                local tmp_dir=$(mktemp -d)
+
+                # Скачиваем
+                if ! wget -O "$tmp_dir/code-server.tar.gz" "$download_url"; then
+                    echo "✗ Ошибка скачивания!"
+                    rm -rf "$tmp_dir"
+                    read -r
+                    continue
+                fi
+
+                echo "Распаковка..."
+                tar -xzf "$tmp_dir/code-server.tar.gz" -C "$tmp_dir"
+
+                # Находим директорию с распакованными файлами
+                local extracted_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name "code-server-*" | head -1)
+
+                if [ -z "$extracted_dir" ]; then
+                    echo "✗ Ошибка распаковки!"
+                    rm -rf "$tmp_dir"
+                    read -r
+                    continue
+                fi
+
+                # Копируем бинарник в /usr/local/bin
+                echo "Установка в систему..."
+                cp "$extracted_dir/bin/code-server" /usr/local/bin/code-server
+                chmod +x /usr/local/bin/code-server
+
+                # Копируем остальные файлы
+                mkdir -p /usr/local/lib/code-server
+                cp -r "$extracted_dir/lib/node" /usr/local/lib/code-server/
+                cp -r "$extracted_dir/lib/vscode" /usr/local/lib/code-server/
+
+                # Очистка
+                rm -rf "$tmp_dir"
+
+                echo "✓ Code-Server установлен: $(code-server --version | head -1)"
+                echo ""
+
+                # Настройка порта
+                echo "=== Настройка порта ==="
+                local cs_port="8080"
+                read -p "Порт для code-server [8080]: " user_port
+                if [ -n "$user_port" ]; then
+                    if [[ "$user_port" =~ ^[0-9]+$ ]] && [ "$user_port" -ge 1024 ] && [ "$user_port" -le 65535 ]; then
+                        cs_port="$user_port"
+                    else
+                        echo "⚠ Неверный порт, использую 8080"
+                        cs_port="8080"
+                    fi
+                fi
+                echo "Порт установлен: $cs_port"
+                echo ""
+
+                # Настройка пароля
+                echo "=== Настройка пароля ==="
+                read -p "Установить пароль для входа? (y/n): " yn
+                if [[ "$yn" == "y" ]]; then
+                    read -sp "Введи пароль: " cs_password
+                    echo ""
+
+                    # Создаем конфиг
+                    mkdir -p "$HOME/.config/code-server"
+                    cat > "$HOME/.config/code-server/config.yaml" << EOF
+bind-addr: 0.0.0.0:$cs_port
+auth: password
+password: $cs_password
+cert: false
+EOF
+                    echo "✓ Пароль установлен"
+                else
+                    # Конфиг без пароля
+                    mkdir -p "$HOME/.config/code-server"
+                    cat > "$HOME/.config/code-server/config.yaml" << EOF
+bind-addr: 0.0.0.0:$cs_port
+auth: none
+cert: false
+EOF
+                    echo "⚠ Пароль не установлен (доступ без аутентификации!)"
+                fi
+
+                echo ""
+                read -p "Запустить code-server сейчас? (y/n): " yn
+                if [[ "$yn" == "y" ]]; then
+                    # Останавливаем если запущен
+                    pkill -f "code-server" 2>/dev/null
+
+                    # Запускаем в фоне
+                    nohup code-server --config "$HOME/.config/code-server/config.yaml" > "$HOME/.code-server.log" 2>&1 &
+                    sleep 2
+
+                    if pgrep -f "code-server" >/dev/null 2>&1; then
+                        local local_ip=$(get_local_ip)
+                        # Читаем порт из конфига
+                        local install_port="8080"
+                        if [ -f "$HOME/.config/code-server/config.yaml" ]; then
+                            install_port=$(grep "bind-addr:" "$HOME/.config/code-server/config.yaml" | cut -d: -f3 || echo "8080")
+                            [ -z "$install_port" ] && install_port="8080"
+                        fi
+                        echo "✓ Code-Server запущен!"
+                        echo ""
+                        echo "Открой в браузере:"
+                        echo "  http://$local_ip:$install_port"
+                        echo ""
+                    else
+                        echo "✗ Не удалось запустить. Проверьте логи: $HOME/.code-server.log"
+                    fi
+                fi
+
+                read -r
+                ;;
+            1)
+                # Запуск
+                if pgrep -f "code-server" >/dev/null 2>&1; then
+                    echo "Code-Server уже запущен!"
+                    read -r
+                    continue
+                fi
+
+                if ! command -v code-server &>/dev/null; then
+                    echo "Code-Server не установлен!"
+                    read -r
+                    continue
+                fi
+
+                echo "=== Запуск Code-Server ==="
+
+                # Проверяем конфиг
+                if [ ! -f "$HOME/.config/code-server/config.yaml" ]; then
+                    echo "Конфиг не найден, создаю с паролем по умолчанию..."
+                    mkdir -p "$HOME/.config/code-server"
+                    cat > "$HOME/.config/code-server/config.yaml" << EOF
+bind-addr: 0.0.0.0:8080
+auth: password
+password: admin123
+cert: false
+EOF
+                    echo "⚠ Пароль по умолчанию: admin123"
+                    echo "  (можно сменить через 'Настроить пароль')"
+                fi
+
+                # Запускаем
+                nohup code-server --config "$HOME/.config/code-server/config.yaml" > "$HOME/.code-server.log" 2>&1 &
+                sleep 2
+
+                if pgrep -f "code-server" >/dev/null 2>&1; then
+                    local local_ip=$(get_local_ip)
+                    # Читаем порт из конфига
+                    local start_port="8080"
+                    if [ -f "$HOME/.config/code-server/config.yaml" ]; then
+                        start_port=$(grep "bind-addr:" "$HOME/.config/code-server/config.yaml" | cut -d: -f3 || echo "8080")
+                        [ -z "$start_port" ] && start_port="8080"
+                    fi
+                    echo "✓ Code-Server запущен!"
+                    echo ""
+                    echo "Открой в браузере:"
+                    echo "  http://$local_ip:$start_port"
+                else
+                    echo "✗ Ошибка запуска. Логи: $HOME/.code-server.log"
+                fi
+                echo ""
+                read -r
+                ;;
+            2)
+                # Остановка
+                echo "=== Остановка Code-Server ==="
+                pkill -f "code-server" 2>/dev/null
+                sleep 1
+
+                if ! pgrep -f "code-server" >/dev/null 2>&1; then
+                    echo "✓ Code-Server остановлен"
+                else
+                    echo "✗ Не удалось остановить (попробуйте: pkill -9 -f code-server)"
+                fi
+                read -r
+                ;;
+            3)
+                # Настройка пароля
+                echo "=== Настройка пароля ==="
+                echo ""
+                echo "1) Установить пароль"
+                echo "2) Отключить пароль (небезопасно!)"
+                echo "3) Назад"
+                read -p "Выбор: " pwd_choice
+
+                case $pwd_choice in
+                    1)
+                        read -sp "Введи новый пароль: " new_pwd
+                        echo ""
+
+                        mkdir -p "$HOME/.config/code-server"
+                        cat > "$HOME/.config/code-server/config.yaml" << EOF
+bind-addr: 0.0.0.0:8080
+auth: password
+password: $new_pwd
+cert: false
+EOF
+                        echo "✓ Пароль обновлен"
+                        echo "  (для применения перезапусти code-server)"
+                        read -r
+                        ;;
+                    2)
+                        mkdir -p "$HOME/.config/code-server"
+                        cat > "$HOME/.config/code-server/config.yaml" << EOF
+bind-addr: 0.0.0.0:8080
+auth: none
+cert: false
+EOF
+                        echo "✓ Пароль отключен"
+                        echo "⚠ ВНИМАНИЕ: Доступ без аутентификации!"
+                        read -r
+                        ;;
+                esac
+                ;;
+            4)
+                # Настройка порта
+                echo "=== Настройка порта ==="
+                echo ""
+
+                # Читаем текущий порт
+                local current_port="8080"
+                if [ -f "$HOME/.config/code-server/config.yaml" ]; then
+                    current_port=$(grep "bind-addr:" "$HOME/.config/code-server/config.yaml" | cut -d: -f3 || echo "8080")
+                    [ -z "$current_port" ] && current_port="8080"
+                fi
+
+                echo "Текущий порт: $current_port"
+                echo ""
+                read -p "Введи новый порт (например, 3000, 8081): " new_port
+
+                # Проверяем валидность порта
+                if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1024 ] || [ "$new_port" -gt 65535 ]; then
+                    echo "✗ Неверный порт! Используй порт от 1024 до 65535"
+                    read -r
+                    continue
+                fi
+
+                # Обновляем конфиг
+                if [ -f "$HOME/.config/code-server/config.yaml" ]; then
+                    # Читаем текущий пароль/режим авторизации
+                    local auth_type=$(grep "^auth:" "$HOME/.config/code-server/config.yaml" | cut -d: -f2 | xargs)
+                    local current_password=""
+
+                    if [ "$auth_type" = "password" ]; then
+                        current_password=$(grep "^password:" "$HOME/.config/code-server/config.yaml" | cut -d: -f2- | xargs)
+                    fi
+
+                    # Пересоздаём конфиг с новым портом
+                    if [ "$auth_type" = "password" ] && [ -n "$current_password" ]; then
+                        cat > "$HOME/.config/code-server/config.yaml" << EOF
+bind-addr: 0.0.0.0:$new_port
+auth: password
+password: $current_password
+cert: false
+EOF
+                    else
+                        cat > "$HOME/.config/code-server/config.yaml" << EOF
+bind-addr: 0.0.0.0:$new_port
+auth: none
+cert: false
+EOF
+                    fi
+                else
+                    # Создаём новый конфиг
+                    mkdir -p "$HOME/.config/code-server"
+                    cat > "$HOME/.config/code-server/config.yaml" << EOF
+bind-addr: 0.0.0.0:$new_port
+auth: password
+password: admin123
+cert: false
+EOF
+                fi
+
+                echo "✓ Порт изменён на: $new_port"
+                echo "  (для применения перезапусти code-server)"
+                read -r
+                ;;
+            5)
+                # Удаление
+                echo "=== Удаление Code-Server ==="
+                read -p "ТОЧНО удалить code-server? (y/n): " yn
+                if [[ "$yn" == "y" ]]; then
+                    pkill -f "code-server" 2>/dev/null
+                    rm -f /usr/local/bin/code-server
+                    rm -rf /usr/local/lib/code-server
+                    rm -rf "$HOME/.config/code-server"
+                    rm -f "$HOME/.code-server.log"
+                    echo "✓ Code-Server удален"
+                fi
+                read -r
+                ;;
+            6)
+                # Статус подключения
+                local local_ip=$(get_local_ip)
+                local ext_ip=$(get_external_ip)
+
+                # Читаем порт из конфига
+                local cs_port="8080"
+                if [ -f "$HOME/.config/code-server/config.yaml" ]; then
+                    cs_port=$(grep "bind-addr:" "$HOME/.config/code-server/config.yaml" | cut -d: -f3 || echo "8080")
+                    [ -z "$cs_port" ] && cs_port="8080"
+                fi
+
+                echo "=== Информация о подключении ==="
+                echo ""
+                echo "Локальная сеть:"
+                echo "  http://$local_ip:$cs_port"
+                echo ""
+                echo "Внешний IP (требуется проброс портов):"
+                echo "  http://$ext_ip:$cs_port"
+                echo ""
+
+                if [ -f "$HOME/.config/code-server/config.yaml" ]; then
+                    echo "Конфигурация:"
+                    cat "$HOME/.config/code-server/config.yaml"
+                fi
+                echo ""
+
+                if [ -f "$HOME/.code-server.log" ]; then
+                    echo "Последние 10 строк лога:"
+                    tail -n 10 "$HOME/.code-server.log"
+                fi
+                echo ""
+                read -r
+                ;;
+            7|-1)
+                return
+                ;;
+        esac
+    done
+}
+
 dashboard() {
     clear
     local local_ip=$(get_local_ip)
@@ -1022,11 +1456,20 @@ dashboard() {
     local ssh_status="OFF"
     pgrep -x sshd >/dev/null 2>&1 && ssh_status="ON (2222)"
 
+    local cs_status="OFF"
+    local cs_port="8080"
+    if [ -f "$HOME/.config/code-server/config.yaml" ]; then
+        cs_port=$(grep "bind-addr:" "$HOME/.config/code-server/config.yaml" | cut -d: -f3 || echo "8080")
+        [ -z "$cs_port" ] && cs_port="8080"
+    fi
+    pgrep -f "code-server" >/dev/null 2>&1 && cs_status="ON ($cs_port)"
+
     echo "=== DASHBOARD ==="
-    echo "Java:    $java_ver"
-    echo "Local:   $local_ip"
-    echo "Ext:     $ext_ip"
-    echo "SSH:     $ssh_status"
+    echo "Java:        $java_ver"
+    echo "Local:       $local_ip"
+    echo "Ext:         $ext_ip"
+    echo "SSH:         $ssh_status"
+    echo "Code-Server: $cs_status"
     echo ""
     echo "Серверы:"
     local servers
@@ -1057,6 +1500,11 @@ dashboard() {
              local user=$(whoami)
              echo "SSH (Terminal):"
              echo "  ssh -p 2222 $user@$local_ip"
+             echo ""
+        fi
+        if [[ "$cs_status" == *"ON"* ]]; then
+             echo "Web IDE (Code-Server):"
+             echo "  http://$local_ip:$cs_port"
              echo ""
         fi
     fi
@@ -1137,7 +1585,7 @@ show_banner() {
     echo -e "${ORANGE}██║ ╚═╝ ██║██████╔╝███████║██║        ██║   ${NC}"
     echo -e "${ORANGE}╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝        ╚═╝   ${NC}"
     echo -e "${ORANGE}      Minecraft Beta Server        ${NC}"
-    echo -e "${ORANGE}        Ubuntu proot + systemd     ${NC}"
+    echo -e "${ORANGE}        Ubuntu proot    ${NC}"
     echo -e "${ORANGE}              v$VERSION     ${NC}"
     echo ""
 }
@@ -1157,7 +1605,7 @@ main_loop() {
         read -ra servers <<< "$(get_servers)"
         local srv_count=${#servers[@]}
 
-        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Проверить обновление" "Удалить всё" "Выход")
+        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Web IDE (code-server)" "Проверить обновление" "Удалить всё" "Выход")
 
         # Header с версией и количеством серверов
         local menu_header="MBSFT v$VERSION | Серверов: $srv_count"
@@ -1171,9 +1619,10 @@ main_loop() {
             2) list_servers ;;
             3) dashboard ;;
             4) step_ssh ;;
-            5) manual_check_update ;;
-            6) uninstall_all ;;
-            7|-1) exit 0 ;;
+            5) install_code_server ;;
+            6) manual_check_update ;;
+            7) uninstall_all ;;
+            8|-1) exit 0 ;;
         esac
     done
 }
