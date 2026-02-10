@@ -282,6 +282,8 @@ check_deps_status() {
     command -v tmux &>/dev/null && echo "tmux:       OK" || echo "tmux:       НЕТ"
     command -v wget &>/dev/null && echo "wget:       OK" || echo "wget:       НЕТ"
     command -v sshd &>/dev/null && echo "openssh:    OK" || echo "openssh:    НЕТ"
+    command -v node &>/dev/null && echo "nodejs:     OK ($(node --version))" || echo "nodejs:     НЕТ"
+    command -v npm &>/dev/null && echo "npm:        OK ($(npm --version))" || echo "npm:        НЕТ"
     echo ""
 }
 
@@ -290,7 +292,7 @@ run_install_deps() {
     echo "=== Установка зависимостей ==="
     export DEBIAN_FRONTEND=noninteractive
     apt update -y && apt upgrade -y
-    apt install -y wget tmux openssh-server iproute2 net-tools curl fzf
+    apt install -y wget tmux openssh-server iproute2 net-tools curl fzf nodejs npm
 
     # Java должна быть установлена через bootstrap
     if ! find_java; then
@@ -308,13 +310,13 @@ run_uninstall_deps() {
     clear
     echo "=== Удаление зависимостей ==="
     echo "ВНИМАНИЕ! Будут удалены:"
-    echo " - Пакеты: wget, tmux, openssh-server, iproute2, net-tools"
+    echo " - Пакеты: wget, tmux, openssh-server, iproute2, net-tools, nodejs, npm"
     echo ""
     read -p "Точно продолжить? (y/n): " yn
     if [[ "$yn" != "y" ]]; then return; fi
 
     echo "Удаление пакетов..."
-    apt remove -y wget tmux openssh-server iproute2 net-tools
+    apt remove -y wget tmux openssh-server iproute2 net-tools nodejs npm
 
     echo "Готово."
     read -r
@@ -1092,64 +1094,28 @@ install_code_server() {
                 echo "Архитектура: $arch -> code-server $cs_arch"
                 echo ""
 
-                # Получаем последнюю версию из GitHub API
-                echo "Получаю последнюю версию..."
-                local latest_version
-                latest_version=$(curl -sL https://api.github.com/repos/coder/code-server/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
-
-                if [ -z "$latest_version" ]; then
-                    echo "✗ Не удалось получить версию. Используем v4.96.2"
-                    latest_version="v4.96.2"
+                # Проверяем наличие Node.js и npm
+                if ! command -v node &>/dev/null || ! command -v npm &>/dev/null; then
+                    echo "Устанавливаю Node.js и npm..."
+                    export DEBIAN_FRONTEND=noninteractive
+                    apt update -y
+                    apt install -y nodejs npm
                 fi
 
-                echo "Последняя версия: $latest_version"
+                echo "Node.js версия: $(node --version 2>/dev/null || echo 'не установлен')"
+                echo "npm версия: $(npm --version 2>/dev/null || echo 'не установлен')"
                 echo ""
 
-                # Формируем URL для скачивания
-                local download_url="https://github.com/coder/code-server/releases/download/${latest_version}/code-server-${latest_version#v}-linux-${cs_arch}.tar.gz"
-
-                echo "Скачиваю code-server..."
-                echo "URL: $download_url"
-                echo ""
-
-                # Создаем временную директорию
-                local tmp_dir=$(mktemp -d)
-
-                # Скачиваем
-                if ! wget -O "$tmp_dir/code-server.tar.gz" "$download_url"; then
-                    echo "✗ Ошибка скачивания!"
-                    rm -rf "$tmp_dir"
+                # Устанавливаем code-server через npm
+                echo "Устанавливаю code-server через npm (это может занять несколько минут)..."
+                if npm install -g code-server --unsafe-perm; then
+                    echo ""
+                    echo "✓ Code-Server установлен: $(code-server --version 2>/dev/null | head -1 || echo 'установлен')"
+                else
+                    echo "✗ Ошибка установки через npm!"
                     read -r
                     continue
                 fi
-
-                echo "Распаковка..."
-                tar -xzf "$tmp_dir/code-server.tar.gz" -C "$tmp_dir"
-
-                # Находим директорию с распакованными файлами
-                local extracted_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name "code-server-*" | head -1)
-
-                if [ -z "$extracted_dir" ]; then
-                    echo "✗ Ошибка распаковки!"
-                    rm -rf "$tmp_dir"
-                    read -r
-                    continue
-                fi
-
-                # Копируем бинарник в /usr/local/bin
-                echo "Установка в систему..."
-                cp "$extracted_dir/bin/code-server" /usr/local/bin/code-server
-                chmod +x /usr/local/bin/code-server
-
-                # Копируем остальные файлы
-                mkdir -p /usr/local/lib/code-server
-                cp -r "$extracted_dir/lib/node" /usr/local/lib/code-server/
-                cp -r "$extracted_dir/lib/vscode" /usr/local/lib/code-server/
-
-                # Очистка
-                rm -rf "$tmp_dir"
-
-                echo "✓ Code-Server установлен: $(code-server --version | head -1)"
                 echo ""
 
                 # Настройка порта
@@ -1396,8 +1362,8 @@ EOF
                 read -p "ТОЧНО удалить code-server? (y/n): " yn
                 if [[ "$yn" == "y" ]]; then
                     pkill -f "code-server" 2>/dev/null
-                    rm -f /usr/local/bin/code-server
-                    rm -rf /usr/local/lib/code-server
+                    echo "Удаление code-server через npm..."
+                    npm uninstall -g code-server 2>/dev/null
                     rm -rf "$HOME/.config/code-server"
                     rm -f "$HOME/.code-server.log"
                     echo "✓ Code-Server удален"
