@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.2.0"
+VERSION="4.2.1"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -1213,8 +1213,8 @@ EOF
                     # Останавливаем если запущен
                     pkill -f "code-server" 2>/dev/null
 
-                    # Запускаем в фоне
-                    nohup code-server --config "$HOME/.config/code-server/config.yaml" > "$HOME/.code-server.log" 2>&1 &
+                    # Запускаем в фоне (открываем домашнюю директорию)
+                    nohup code-server --config "$HOME/.config/code-server/config.yaml" "$HOME" > "$HOME/.code-server.log" 2>&1 &
                     sleep 2
 
                     if pgrep -f "code-server" >/dev/null 2>&1; then
@@ -1267,8 +1267,8 @@ EOF
                     echo "  (можно сменить через 'Настроить пароль')"
                 fi
 
-                # Запускаем
-                nohup code-server --config "$HOME/.config/code-server/config.yaml" > "$HOME/.code-server.log" 2>&1 &
+                # Запускаем (открываем домашнюю директорию)
+                nohup code-server --config "$HOME/.config/code-server/config.yaml" "$HOME" > "$HOME/.code-server.log" 2>&1 &
                 sleep 2
 
                 if pgrep -f "code-server" >/dev/null 2>&1; then
