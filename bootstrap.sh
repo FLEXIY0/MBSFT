@@ -129,7 +129,8 @@ echo "=== Step 6/7: Installing MBSFT main script ==="
 echo "Downloading mbsft.sh from GitHub..."
 proot-distro login $DISTRO -- bash -c "
     mkdir -p /usr/local/bin
-    wget -q -O /usr/local/bin/mbsft '$GITHUB_RAW/mbsft.sh' || exit 1
+    # Cache busting for fresh version
+    wget -q -O /usr/local/bin/mbsft '$GITHUB_RAW/mbsft.sh?t=\$(date +%s)' || exit 1
     chmod +x /usr/local/bin/mbsft
 " || { echo "Error: Failed to download main script"; exit 1; }
 echo "✓ Main script installed at /usr/local/bin/mbsft"
