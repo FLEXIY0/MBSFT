@@ -59,28 +59,65 @@ fi
 
 echo ""
 echo "=== Step 3/5: Installing Ubuntu container ==="
-if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
-    echo "Installing Ubuntu (using mirror for speed)..."
+if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
+    echo "Installing Ubuntu..."
     
-    # Backup and patch proot-distro definition to use mirror
-    PD_CONF="$PREFIX/etc/proot-distro/$DISTRO.sh"
+    # Define source and target
+    PD_CONF="$PREFIX/etc/proot-distro/ubuntu.sh"
+    
+    # Attempt to source the definition to get the official URL
     if [ -f "$PD_CONF" ]; then
-        cp "$PD_CONF" "$PD_CONF.bak"
-        # Use ghproxy.net to accelerate GitHub downloads
-        sed -i 's|https://github.com|https://ghproxy.net/https://github.com|g' "$PD_CONF"
+        # Use a subshell to avoid polluting environment
+        eval $(grep '^TARBALL_URL=' "$PD_CONF")
+        eval $(grep '^TARBALL_SHA256=' "$PD_CONF")
+    fi
+    
+    # Fallback if parsing failed
+    if [ -z "$TARBALL_URL" ]; then
+        # Default to a known recent version (hardcoded fallback)
+        TARBALL_URL="https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
     fi
 
-    proot-distro install $DISTRO
-    INSTDIR_EXIT=$?
-
-    # Restore original definition
-    if [ -f "$PD_CONF.bak" ]; then
-        mv "$PD_CONF.bak" "$PD_CONF"
+    CACHE_DIR="$PREFIX/var/lib/proot-distro/dlcache"
+    mkdir -p "$CACHE_DIR"
+    FILENAME=$(basename "$TARBALL_URL")
+    CACHE_FILE="$CACHE_DIR/$FILENAME"
+    
+    # List of mirrors to try
+    MIRRORS=(
+        "https://ghproxy.net/$TARBALL_URL"
+        "https://mirror.ghproxy.com/$TARBALL_URL"
+        "$TARBALL_URL"
+    )
+    
+    if [ ! -f "$CACHE_FILE" ]; then
+        echo "Downloading Ubuntu rootfs (trying multiple mirrors)..."
+        DOWNLOAD_SUCCESS=false
+        
+        for url in "${MIRRORS[@]}"; do
+            echo "Trying: $url"
+            # Try to download using curl (resume supported)
+            if curl -L -C - --connect-timeout 5 --max-time 600 -o "$CACHE_FILE.part" "$url"; then
+                if [ -s "$CACHE_FILE.part" ]; then
+                    mv "$CACHE_FILE.part" "$CACHE_FILE"
+                    DOWNLOAD_SUCCESS=true
+                    echo " Download successful!"
+                    break
+                fi
+            fi
+            echo " Mirror failed, trying next..."
+        done
+        
+        if [ "$DOWNLOAD_SUCCESS" = false ]; then
+             echo "Warning: All mirrors failed. proot-distro will do standard install."
+             rm -f "$CACHE_FILE.part"
+        fi
+    else
+        echo "Found cached Ubuntu rootfs."
     fi
 
-    if [ $INSTDIR_EXIT -ne 0 ]; then
-        echo "Error: Ubuntu installation failed"; exit 1; 
-    fi
+    # Run installation (will use cache if valid)
+    proot-distro install ubuntu || { echo "Error: Ubuntu installation failed"; exit 1; }
     echo "✓ Ubuntu container installed"
 else
     echo "✓ Ubuntu container already exists"
