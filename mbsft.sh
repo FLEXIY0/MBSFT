@@ -850,27 +850,34 @@ step_ssh() {
     while true; do
         clear
         show_banner
-        echo "=== SSH Управление ==="
+        echo "=== SSH Управление (Ubuntu container) ==="
+        echo ""
 
-        local menu_items=("Включить SSH + Автозапуск" "Добавить SSH ключ" "Статус подключения" "Сменить пароль" "Починить SSH" "DEBUG sshd" "Назад")
+        # Check SSH status
+        local ssh_running="OFF"
+        if pgrep -x sshd >/dev/null 2>&1; then
+            ssh_running="ON (port 2222)"
+        fi
+        echo "SSH Status: $ssh_running"
+        echo ""
+
+        local menu_items=("Start/Restart SSH" "Добавить SSH ключ" "Статус подключения" "Сменить пароль (root)" "Починить SSH" "DEBUG sshd" "Назад")
         local choice
         choice=$(arrow_menu menu_items)
 
         case $choice in
             0)
-                echo "=== Настройка SSH ==="
-                export DEBIAN_FRONTEND=noninteractive
-                apt install -y openssh-server
+                echo "=== Запуск SSH ==="
+                # Start SSH
+                /usr/sbin/sshd 2>/dev/null
 
-                # В Ubuntu используем systemd для автозапуска
-                systemctl enable ssh
-                systemctl start ssh
-
-                read -p "Хочешь задать пароль? (y/n): " yn
-                if [[ "$yn" == "y" ]]; then
-                    passwd
+                # Check if started
+                if pgrep -x sshd >/dev/null 2>&1; then
+                    echo "✓ SSH запущен на порту 2222"
+                else
+                    echo "✗ Не удалось запустить SSH"
+                    echo "Запусти DEBUG для диагностики"
                 fi
-                echo "SSH включен. Автозапуск настроен через systemd."
                 read -r
                 ;;
             1)
@@ -913,32 +920,43 @@ step_ssh() {
                 local user=$(whoami)
                 local local_ip=$(get_local_ip)
                 local ext_ip=$(get_external_ip)
-                echo "User: $user"
-                echo "Local: $local_ip"
-                echo "External: $ext_ip"
-                echo "Connect: ssh -p 22 $user@$local_ip"
+                echo "=== SSH Connection Info ==="
+                echo "User:     $user"
+                echo "Local IP: $local_ip"
+                echo "Ext IP:   $ext_ip"
+                echo ""
+                echo "Connect from Termux:"
+                echo "  ssh -p 2222 $user@localhost"
+                echo ""
+                echo "Connect from network:"
+                echo "  ssh -p 2222 $user@$local_ip"
+                echo ""
+                echo "Note: SSH runs inside proot, port 2222"
                 read -r
                 ;;
             3)
+                echo "=== Change root password ==="
                 passwd
                 read -r
                 ;;
             4)
-                echo "Ремонт..."
-                systemctl stop ssh
-                chmod 700 "$HOME" "$HOME/.ssh"
-                chmod 600 "$HOME/.ssh/authorized_keys" 2>/dev/null
+                echo "=== Repair SSH ==="
+                pkill sshd 2>/dev/null
+                chmod 700 /root /root/.ssh 2>/dev/null
+                chmod 600 /root/.ssh/authorized_keys 2>/dev/null
                 ssh-keygen -A
-                systemctl start ssh
-                echo "Готово."
+                /usr/sbin/sshd 2>/dev/null
+                echo "✓ SSH repaired and restarted"
                 read -r
                 ;;
             5)
-                echo "Запускаю sshd в режиме отладки..."
-                echo "Нажми Ctrl+C для выхода."
-                systemctl stop ssh
-                /usr/sbin/sshd -D -d -e -p 22
-                systemctl start ssh
+                echo "=== DEBUG sshd ==="
+                echo "Starting sshd in debug mode..."
+                echo "Press Ctrl+C to exit"
+                echo ""
+                pkill sshd 2>/dev/null
+                /usr/sbin/sshd -D -d -e -p 2222
+                /usr/sbin/sshd 2>/dev/null
                 read -r
                 ;;
             6|-1)
@@ -957,7 +975,7 @@ dashboard() {
         java_ver=$("$JAVA_BIN" -version 2>&1 | head -1)
     fi
     local ssh_status="OFF"
-    systemctl is-active --quiet ssh && ssh_status="ON (22)"
+    pgrep -x sshd >/dev/null 2>&1 && ssh_status="ON (2222)"
 
     echo "=== DASHBOARD ==="
     echo "Java:    $java_ver"
@@ -993,7 +1011,7 @@ dashboard() {
         if [[ "$ssh_status" == *"ON"* ]]; then
              local user=$(whoami)
              echo "SSH (Terminal):"
-             echo "  ssh -p 22 $user@$local_ip"
+             echo "  ssh -p 2222 $user@$local_ip"
              echo ""
         fi
     fi

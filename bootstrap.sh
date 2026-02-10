@@ -59,17 +59,73 @@ else
 fi
 
 echo ""
-echo "=== Step 3/5: Installing dependencies inside Ubuntu ==="
-echo "Installing Java, tmux, systemd, fzf..."
+echo "=== Step 3/5: Setting up fast mirrors in Ubuntu ==="
 proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
-    apt update -y 2>/dev/null
-    apt install -y openjdk-8-jre-headless wget tmux curl fzf 2>/dev/null
-" || { echo "Warning: Some packages may not have installed"; }
+
+    # Test mirrors and select fastest
+    echo 'Testing Ubuntu mirrors...'
+    mirrors=(
+        'http://mirror.yandex.ru/ubuntu'
+        'http://mirrors.edge.kernel.org/ubuntu'
+        'http://mirror.us.leaseweb.net/ubuntu'
+        'http://archive.ubuntu.com/ubuntu'
+    )
+
+    best_mirror=''
+    best_time=10
+
+    for mirror in \"\${mirrors[@]}\"; do
+        time=\$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 3 --max-time 5 \"\$mirror/dists/\" 2>/dev/null || echo '10')
+        if (( \$(echo \"\$time < \$best_time\" | bc -l) )); then
+            best_time=\$time
+            best_mirror=\$mirror
+        fi
+        echo \"  \$mirror -> \${time}s\"
+    done
+
+    if [ -n \"\$best_mirror\" ]; then
+        echo \"Using fastest mirror: \$best_mirror\"
+        cat > /etc/apt/sources.list << EOF
+deb \$best_mirror jammy main restricted universe multiverse
+deb \$best_mirror jammy-updates main restricted universe multiverse
+deb \$best_mirror jammy-security main restricted universe multiverse
+EOF
+    fi
+" 2>/dev/null
+echo "✓ Mirrors configured"
+
+echo ""
+echo "=== Step 4/5: Installing dependencies inside Ubuntu ==="
+echo "Installing Java, tmux, SSH, fzf..."
+proot-distro login $DISTRO -- bash -c "
+    export DEBIAN_FRONTEND=noninteractive
+    apt update -y
+    apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc
+" || { echo "Error: Package installation failed"; exit 1; }
 echo "✓ Dependencies installed"
 
 echo ""
-echo "=== Step 4/5: Installing MBSFT main script ==="
+echo "=== Step 5/7: Configuring SSH inside Ubuntu ==="
+proot-distro login $DISTRO -- bash -c "
+    # Create SSH directory
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+    touch /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+
+    # Generate host keys
+    ssh-keygen -A 2>/dev/null
+
+    # Configure SSH to allow root login
+    sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
+    echo 'Port 2222' >> /etc/ssh/sshd_config
+" 2>/dev/null
+echo "✓ SSH configured (port 2222)"
+
+echo ""
+echo "=== Step 6/7: Installing MBSFT main script ==="
 echo "Downloading mbsft.sh from GitHub..."
 proot-distro login $DISTRO -- bash -c "
     mkdir -p /usr/local/bin
@@ -79,7 +135,7 @@ proot-distro login $DISTRO -- bash -c "
 echo "✓ Main script installed at /usr/local/bin/mbsft"
 
 echo ""
-echo "=== Step 5/5: Creating wrapper script ==="
+echo "=== Step 7/7: Creating wrapper script ==="
 cat > "$PREFIX/bin/mbsft" << 'WRAPPER_EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 # MBSFT v4.0 Wrapper
@@ -87,6 +143,14 @@ cat > "$PREFIX/bin/mbsft" << 'WRAPPER_EOF'
 
 # Bind mount Termux home to access server data
 TERMUX_HOME="/data/data/com.termux/files/home"
+
+# Start SSH if not running (silent)
+proot-distro login ubuntu -- bash -c "
+    if ! pgrep -x sshd > /dev/null 2>&1; then
+        /usr/sbin/sshd 2>/dev/null
+    fi
+" 2>/dev/null
+
 proot-distro login ubuntu --bind "$TERMUX_HOME:/termux-home" -- bash -c "
     export MBSFT_BASE_DIR=/termux-home/mbsft-servers
     /usr/local/bin/mbsft \"\$@\"
@@ -101,8 +165,17 @@ echo "============================================"
 echo "  ✓ Installation Complete!"
 echo "============================================"
 echo ""
-echo "Run: mbsft"
+echo "Quick Start:"
+echo "  mbsft          - Launch MBSFT menu"
 echo ""
-echo "This will automatically enter Ubuntu proot"
-echo "and launch the MBSFT menu."
+echo "SSH Access (Ubuntu container):"
+echo "  Port: 2222 (inside proot)"
+echo "  User: root"
+echo ""
+echo "To setup SSH:"
+echo "  1. Run: mbsft"
+echo "  2. Go to: SSH → Add SSH key"
+echo "  3. Or set password with 'passwd' inside proot"
+echo ""
+echo "SSH will auto-start when you run mbsft."
 echo ""
