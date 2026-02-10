@@ -5,6 +5,16 @@
 # One-time setup for proot Ubuntu environment
 # ============================================
 
+# Fix: curl | bash (redirect stdin to terminal)
+if [ ! -t 0 ]; then
+    TMPSCRIPT=$(mktemp "$HOME/.mbsft_bootstrap_XXXXXX.sh")
+    cat > "$TMPSCRIPT"
+    chmod +x "$TMPSCRIPT"
+    bash "$TMPSCRIPT" "$@" < /dev/tty
+    rm -f "$TMPSCRIPT"
+    exit
+fi
+
 VERSION="4.0"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
