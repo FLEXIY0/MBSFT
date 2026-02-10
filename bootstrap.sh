@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="4.6"
+VERSION="4.6.1"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -141,11 +141,10 @@ proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
 
     # Use Yandex mirror for Russia (fastest)
-    echo 'Setting up Yandex mirror...'
+    # Only base repository - no updates/security for faster setup
+    echo 'Setting up Yandex mirror (base only)...'
     cat > /etc/apt/sources.list << 'EOF'
 deb http://mirror.yandex.ru/ubuntu jammy main restricted universe multiverse
-deb http://mirror.yandex.ru/ubuntu jammy-updates main restricted universe multiverse
-deb http://mirror.yandex.ru/ubuntu jammy-security main restricted universe multiverse
 EOF
 
     # apt update with retry
