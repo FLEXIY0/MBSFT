@@ -57,13 +57,13 @@ if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
     echo "Attempting fast download from CDN mirrors..."
 
     local alt_urls=(
-        "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-jammy-aarch64-pd-v4.30.1.tar.xz"
-        "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-jammy-aarch64-pd-v4.30.1.tar.xz"
-        "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-jammy-aarch64-pd-v4.30.1.tar.xz"
+        "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+        "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
+        "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
     )
 
     local cache_dir="$PREFIX/var/lib/proot-distro/dlcache"
-    local tarball="$cache_dir/ubuntu-jammy-aarch64-pd-v4.30.1.tar.xz"
+    local tarball="$cache_dir/ubuntu-questing-aarch64-pd-v4.30.1.tar.xz"
 
     mkdir -p "$cache_dir"
 
