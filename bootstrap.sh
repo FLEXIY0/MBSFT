@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="5.0.3"
+VERSION="5.0.4"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -151,10 +151,10 @@ fi
 
 echo ""
 echo "=== Step 4/5: Installing dependencies inside Ubuntu ==="
-echo "Installing Java, tmux, SSH, fzf..."
+echo "Installing Java, tmux, SSH, fzf, and IDE libs..."
 proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
-    apt update -y && apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc
+    apt update -y && apt install -y openjdk-8-jre-headless wget tmux curl fzf openssh-server bc libatomic1 tar gzip ca-certificates procps
 " || { echo "Error: Package installation failed"; exit 1; }
 echo "✓ Dependencies installed"
 
@@ -172,7 +172,8 @@ proot-distro login $DISTRO -- bash -c "
 
     # Configure SSH to allow root login
     sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-    sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
+    # Ensure Port is set to 2222 (remove old entries to avoid duplicates)
+    sed -i '/^Port/d' /etc/ssh/sshd_config
     echo 'Port 2222' >> /etc/ssh/sshd_config
 "
 echo "✓ SSH configured (port 2222)"
@@ -223,18 +224,20 @@ cat > "$PREFIX/bin/mbsft" << 'WRAPPER_EOF'
 # Bind mount Termux home to access server data
 TERMUX_HOME="/data/data/com.termux/files/home"
 
-# Start SSH if not running (silent)
+# Start SSH with bind mount if not running (silent)
 proot-distro login ubuntu --bind "$TERMUX_HOME:/termux-home" -- bash -c "
     if ! pgrep -x sshd > /dev/null 2>&1; then
-        # Ensure privilege separation dir exists
         mkdir -p /run/sshd
         chmod 0755 /run/sshd
         /usr/sbin/sshd 2>/dev/null
     fi
 " 2>/dev/null
 
+# Run main script with bind mount
 proot-distro login ubuntu --bind "$TERMUX_HOME:/termux-home" -- bash -c "
-    export MBSFT_BASE_DIR=/termux-home/mbsft-servers
+    if [ -z \"$MBSFT_BASE_DIR\" ]; then
+         export MBSFT_BASE_DIR=/termux-home/mbsft-servers
+    fi
     /usr/local/bin/mbsft \"\$@\"
 " -- "$@"
 WRAPPER_EOF
