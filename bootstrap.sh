@@ -224,8 +224,11 @@ cat > "$PREFIX/bin/mbsft" << 'WRAPPER_EOF'
 TERMUX_HOME="/data/data/com.termux/files/home"
 
 # Start SSH if not running (silent)
-proot-distro login ubuntu -- bash -c "
+proot-distro login ubuntu --bind "$TERMUX_HOME:/termux-home" -- bash -c "
     if ! pgrep -x sshd > /dev/null 2>&1; then
+        # Ensure privilege separation dir exists
+        mkdir -p /run/sshd
+        chmod 0755 /run/sshd
         /usr/sbin/sshd 2>/dev/null
     fi
 " 2>/dev/null

@@ -18,7 +18,12 @@ if [ ! -t 0 ]; then
 fi
 
 # Пути
-BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
+# Пути
+if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
+    BASE_DIR="/termux-home/mbsft-servers"
+else
+    BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
+fi
 VERSION="4.0.1"
 # Java: будет найдена динамически
 JAVA_BIN=""
