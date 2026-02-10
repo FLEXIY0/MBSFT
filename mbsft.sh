@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.5.0"
+VERSION="4.6.0"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -399,52 +399,9 @@ make_start_sh() {
         args="--server"
         # FoxLoader требует согласие EULA при первом запуске
         echo "eula=true" > "$sv_dir/eula.txt"
-
-        # Для ARM64 используем Box64 + x86_64 Java
-        local arch=$(uname -m)
-        if [ "$arch" == "aarch64" ] || [ "$arch" == "arm64" ]; then
-            echo "=== FoxLoader на ARM64 - используем Box64 ==="
-
-            # Устанавливаем Box64
-            if ! install_box64; then
-                echo "✗ Не удалось установить Box64"
-                echo "  FoxLoader не будет работать на ARM64 без Box64"
-                read -r
-                return 1
-            fi
-
-            # Устанавливаем x86_64 Java
-            if ! install_x86_64_java; then
-                echo "✗ Не удалось установить x86_64 Java"
-                read -r
-                return 1
-            fi
-
-            local java_x86="/opt/jdk-x86_64/bin/java"
-
-            # Создаём start.sh с Box64
-            cat > "$sv_dir/start.sh" << EOF
-#!/usr/bin/bash
-cd "$sv_dir"
-echo "[$name] Starting server..."
-echo "RAM: $ram, Port: $port, Core: $core"
-echo "[Box64] Запускаю через эмуляцию x86_64..."
-
-# Запускаем x86_64 Java через Box64
-box64 $java_x86 -Xmx$ram -Xms$ram -jar server.jar $args
-EOF
-            chmod +x "$sv_dir/start.sh"
-            echo "✓ Создан start.sh с Box64 (x86_64 эмуляция)"
-            echo ""
-            echo "ВНИМАНИЕ: Box64 добавляет overhead производительности"
-            echo "Альтернатива: используй Reindev (нативная поддержка ARM64)"
-            echo ""
-            read -p "Нажми Enter для продолжения..."
-            return 0
-        fi
     fi
 
-    # Обычный start.sh для не-FoxLoader или не-ARM64
+    # Обычный start.sh для всех ядер (включая FoxLoader на ARM64)
     cat > "$sv_dir/start.sh" << EOF
 #!/usr/bin/bash
 cd "$sv_dir"
