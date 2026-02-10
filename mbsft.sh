@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.1.2"
+VERSION="4.1.3"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -1094,12 +1094,32 @@ install_code_server() {
                 echo "Архитектура: $arch -> code-server $cs_arch"
                 echo ""
 
-                # Проверяем наличие Node.js и npm
-                if ! command -v node &>/dev/null || ! command -v npm &>/dev/null; then
-                    echo "Устанавливаю Node.js и npm..."
+                # Проверяем версию Node.js
+                local node_version=""
+                if command -v node &>/dev/null; then
+                    node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+                fi
+
+                # Code-Server требует Node.js v22+
+                if [ -z "$node_version" ] || [ "$node_version" -lt 22 ]; then
+                    echo "⚠ Code-Server требует Node.js v22+"
+                    echo "Текущая версия: $(node --version 2>/dev/null || echo 'не установлен')"
+                    echo ""
+                    echo "Устанавливаю Node.js v22 из официального репозитория..."
+
                     export DEBIAN_FRONTEND=noninteractive
-                    apt update -y
-                    apt install -y nodejs npm
+
+                    # Устанавливаем curl если нет
+                    apt install -y curl
+
+                    # Добавляем NodeSource репозиторий для Node.js v22
+                    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+
+                    # Устанавливаем Node.js v22
+                    apt install -y nodejs
+
+                    echo ""
+                    echo "✓ Node.js обновлен до версии: $(node --version)"
                 fi
 
                 echo "Node.js версия: $(node --version 2>/dev/null || echo 'не установлен')"
