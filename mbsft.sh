@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.0.1"
+VERSION="4.0.2"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
