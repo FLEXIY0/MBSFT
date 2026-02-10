@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.1.3"
+VERSION="4.2.0"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -1094,61 +1094,74 @@ install_code_server() {
                 echo "Архитектура: $arch -> code-server $cs_arch"
                 echo ""
 
-                # Проверяем версию Node.js
-                local node_version=""
-                if command -v node &>/dev/null; then
-                    node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
-                fi
-
-                # Code-Server требует Node.js v22+
-                if [ -z "$node_version" ] || [ "$node_version" -lt 22 ]; then
-                    echo "⚠ Code-Server требует Node.js v22+"
-                    echo "Текущая версия: $(node --version 2>/dev/null || echo 'не установлен')"
-                    echo ""
-                    echo "Устанавливаю Node.js v22 из официального репозитория..."
-
-                    export DEBIAN_FRONTEND=noninteractive
-
-                    # Устанавливаем curl если нет
-                    apt install -y curl
-
-                    # Добавляем NodeSource репозиторий для Node.js v22
-                    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-
-                    # Устанавливаем Node.js v22
-                    apt install -y nodejs
-
-                    echo ""
-                    echo "✓ Node.js обновлен до версии: $(node --version)"
-                fi
-
-                echo "Node.js версия: $(node --version 2>/dev/null || echo 'не установлен')"
-                echo "npm версия: $(npm --version 2>/dev/null || echo 'не установлен')"
-                echo ""
-
                 # Очистка старых файлов перед установкой
                 echo "Очистка старых файлов..."
                 pkill -f "code-server" 2>/dev/null
                 rm -f /usr/local/bin/code-server 2>/dev/null
-                rm -rf /usr/local/lib/code-server 2>/dev/null
+                rm -rf /opt/code-server 2>/dev/null
                 npm uninstall -g code-server 2>/dev/null
                 echo ""
 
-                # Устанавливаем code-server через npm
-                echo "Устанавливаю code-server через npm (это может занять несколько минут)..."
-                echo "⚠ Если увидишь предупреждение о версии Node.js - это нормально, установка продолжится"
+                # Получаем последнюю версию из GitHub API
+                echo "Получаю последнюю версию code-server..."
+                local latest_version
+                latest_version=$(curl -sL https://api.github.com/repos/coder/code-server/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+
+                if [ -z "$latest_version" ]; then
+                    echo "⚠ Не удалось получить версию из GitHub, использую v4.96.2"
+                    latest_version="v4.96.2"
+                fi
+
+                echo "Версия: $latest_version"
                 echo ""
 
-                if npm install -g code-server --unsafe-perm --force; then
-                    echo ""
-                    echo "✓ Code-Server установлен: $(code-server --version 2>/dev/null | head -1 || echo 'установлен')"
-                else
-                    echo "✗ Ошибка установки через npm!"
-                    echo ""
-                    echo "Попробуйте обновить Node.js:"
-                    echo "  apt update && apt install -y nodejs npm"
+                # Формируем URL для скачивания standalone версии
+                local download_url="https://github.com/coder/code-server/releases/download/${latest_version}/code-server-${latest_version#v}-linux-${cs_arch}.tar.gz"
+
+                echo "Скачиваю standalone версию code-server..."
+                echo "(содержит встроенный Node.js, не требует установки)"
+                echo ""
+
+                # Создаем временную директорию
+                local tmp_dir=$(mktemp -d)
+
+                # Скачиваем
+                if ! wget --show-progress -O "$tmp_dir/code-server.tar.gz" "$download_url"; then
+                    echo "✗ Ошибка скачивания!"
+                    echo "URL: $download_url"
+                    rm -rf "$tmp_dir"
                     read -r
                     continue
+                fi
+
+                echo ""
+                echo "Распаковка..."
+                tar -xzf "$tmp_dir/code-server.tar.gz" -C "$tmp_dir"
+
+                # Находим директорию с распакованными файлами
+                local extracted_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name "code-server-*" | head -1)
+
+                if [ -z "$extracted_dir" ]; then
+                    echo "✗ Ошибка распаковки!"
+                    rm -rf "$tmp_dir"
+                    read -r
+                    continue
+                fi
+
+                # Перемещаем в /opt
+                echo "Установка в систему..."
+                mkdir -p /opt
+                mv "$extracted_dir" /opt/code-server
+
+                # Создаем симлинк в /usr/local/bin
+                ln -sf /opt/code-server/bin/code-server /usr/local/bin/code-server
+
+                # Очистка
+                rm -rf "$tmp_dir"
+
+                echo "✓ Code-Server установлен!"
+                if command -v code-server &>/dev/null; then
+                    echo "Версия: $(code-server --version 2>/dev/null | head -1 || echo 'установлен')"
                 fi
                 echo ""
 
@@ -1396,7 +1409,9 @@ EOF
                 read -p "ТОЧНО удалить code-server? (y/n): " yn
                 if [[ "$yn" == "y" ]]; then
                     pkill -f "code-server" 2>/dev/null
-                    echo "Удаление code-server через npm..."
+                    echo "Удаление code-server..."
+                    rm -f /usr/local/bin/code-server 2>/dev/null
+                    rm -rf /opt/code-server 2>/dev/null
                     npm uninstall -g code-server 2>/dev/null
                     rm -rf "$HOME/.config/code-server"
                     rm -f "$HOME/.code-server.log"
