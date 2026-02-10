@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.4.0"
+VERSION="4.4.1"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -319,8 +319,8 @@ install_x86_64_java() {
     mkdir -p /opt
     tar -xzf "$tmp_dir/jdk.tar.gz" -C "$tmp_dir"
 
-    # Находим распакованную директорию
-    local extracted=$(find "$tmp_dir" -maxdepth 1 -type d -name "jdk8*" -o -name "openlogic*" -o -name "*jre*" | head -1)
+    # Находим распакованную директорию (используем ls вместо find для избежания getcwd проблем)
+    local extracted=$(ls -d "$tmp_dir"/jdk8* "$tmp_dir"/openlogic* "$tmp_dir"/*jre* 2>/dev/null | head -1)
 
     if [ -z "$extracted" ]; then
         echo "✗ Ошибка распаковки"
