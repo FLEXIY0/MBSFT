@@ -156,16 +156,35 @@ echo "=== Step 6/7: Installing MBSFT main script ==="
 echo "Downloading mbsft.sh from GitHub..."
 proot-distro login $DISTRO -- bash -c "
     mkdir -p /usr/local/bin
-    # Cache busting with curl (stronger than wget)
-    curl -sL \
-        -H 'Cache-Control: no-store, no-cache, must-revalidate' \
-        -H 'Pragma: no-cache' \
-        -H 'Expires: 0' \
-        --no-keepalive \
-        -o /usr/local/bin/mbsft \
-        '$GITHUB_RAW/mbsft.sh?nocache=\$(date +%s)_\$\$_\${RANDOM}' || exit 1
-    chmod +x /usr/local/bin/mbsft
-" || { echo "Error: Failed to download main script"; exit 1; }
+    
+    # List of mirrors (Proxy first for speed/access)
+    URLS=(
+        'https://ghproxy.net/https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/mbsft.sh'
+        'https://mirror.ghproxy.com/https://raw.githubusercontent.com/FLEXIY0/MBSFT/main/mbsft.sh'
+        '$GITHUB_RAW/mbsft.sh'
+    )
+
+    DOWNLOAD_OK=false
+    for url in \"\${URLS[@]}\"; do
+        echo \"Downloading from: \$url\"
+        # Add cache buster
+        target_url=\"\$url?t=\$(date +%s)\"
+        
+        if curl -sL --connect-timeout 10 --max-time 30 -o /usr/local/bin/mbsft \"\$target_url\"; then
+            # Verify file is not empty and looks like a script
+            if [ -s /usr/local/bin/mbsft ] && grep -q 'bash' /usr/local/bin/mbsft; then
+                chmod +x /usr/local/bin/mbsft
+                DOWNLOAD_OK=true
+                break
+            fi
+        fi
+        echo \"  Failed, trying next...\"
+    done
+
+    if [ \"\$DOWNLOAD_OK\" = false ]; then
+        exit 1
+    fi
+" || { echo "Error: Failed to download main script from any mirror"; exit 1; }
 echo "✓ Main script installed at /usr/local/bin/mbsft"
 
 echo ""
