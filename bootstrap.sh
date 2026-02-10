@@ -60,8 +60,27 @@ fi
 echo ""
 echo "=== Step 3/5: Installing Ubuntu container ==="
 if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
-    echo "Installing Ubuntu (this may take a few minutes)..."
-    proot-distro install $DISTRO || { echo "Error: Ubuntu installation failed"; exit 1; }
+    echo "Installing Ubuntu (using mirror for speed)..."
+    
+    # Backup and patch proot-distro definition to use mirror
+    PD_CONF="$PREFIX/etc/proot-distro/$DISTRO.sh"
+    if [ -f "$PD_CONF" ]; then
+        cp "$PD_CONF" "$PD_CONF.bak"
+        # Use ghproxy.net to accelerate GitHub downloads
+        sed -i 's|https://github.com|https://ghproxy.net/https://github.com|g' "$PD_CONF"
+    fi
+
+    proot-distro install $DISTRO
+    INSTDIR_EXIT=$?
+
+    # Restore original definition
+    if [ -f "$PD_CONF.bak" ]; then
+        mv "$PD_CONF.bak" "$PD_CONF"
+    fi
+
+    if [ $INSTDIR_EXIT -ne 0 ]; then
+        echo "Error: Ubuntu installation failed"; exit 1; 
+    fi
     echo "✓ Ubuntu container installed"
 else
     echo "✓ Ubuntu container already exists"
