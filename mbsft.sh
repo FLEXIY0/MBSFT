@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.2.1"
+VERSION="4.2.2"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -414,7 +414,7 @@ create_server() {
         wget -O "$sv_dir/server.jar" "https://github.com/FLEXIY0/MBSFT/releases/download/servers/reindev-server-2.9_03.jar" || { echo "Ошибка загрузки"; return; }
     elif [ "$core_choice" == "foxloader" ]; then
         echo "Скачиваю FoxLoader..."
-        wget -O "$sv_dir/server.jar" "https://github.com/Fox2Code/FoxLoader/releases/download/2.0-alpha39/foxloader-2.0-alpha39-server.jar" || { echo "Ошибка загрузки"; return; }
+        wget -O "$sv_dir/server.jar" "https://github.com/FLEXIY0/MBSFT/releases/download/servers/foxloader-2.0-alpha39-server.jar" || { echo "Ошибка загрузки"; return; }
     elif [ "$core_choice" == "custom" ]; then
         echo "Закинь server.jar в папку $sv_dir/ и нажми Enter"
         read -r
