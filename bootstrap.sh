@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="4.6.1"
+VERSION="5.0"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -69,8 +69,10 @@ fi
 
 echo ""
 echo "=== Step 3/7: Installing Ubuntu container ==="
-if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
-    echo "Creating Ubuntu container (this may take a few minutes)..."
+ROOTFS_DIR="$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO"
+
+if [ ! -d "$ROOTFS_DIR" ]; then
+    echo "Creating Ubuntu container (direct extraction method)..."
 
     # Detect CPU architecture
     arch=$(uname -m)
@@ -90,9 +92,9 @@ if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
 
     echo "Detected architecture: $arch → ubuntu-questing-$ubuntu_arch"
 
-    # Fast download via CDN mirrors using PD_OVERRIDE_TARBALL_URL
-    # This forces proot-distro to use our CDN instead of slow default mirrors
-    echo "Configuring fast CDN mirrors for download..."
+    # RADICAL APPROACH: Download + extract rootfs DIRECTLY (bypass proot-distro install)
+    # This is 10x faster than proot-distro's mirror selection
+    echo "Downloading rootfs from fast CDN..."
 
     cdn_urls=(
         "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
@@ -100,36 +102,57 @@ if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
         "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
     )
 
-    # Try each CDN mirror until successful
-    installed=false
+    TEMP_TARBALL="$PREFIX/tmp/ubuntu-rootfs.tar.xz"
+    mkdir -p "$PREFIX/tmp"
+
+    # Download from CDN mirrors
+    downloaded=false
     for cdn_url in "${cdn_urls[@]}"; do
         mirror_name=$(echo "$cdn_url" | cut -d'/' -f3)
-        echo "  Trying CDN: $mirror_name"
+        echo "  Downloading from: $mirror_name"
 
-        # Override proot-distro's tarball URL to use fast CDN
-        export PD_OVERRIDE_TARBALL_URL="$cdn_url"
-
-        # Try installing with 2-minute timeout
-        if timeout 180 proot-distro install $DISTRO 2>&1; then
-            echo "  ✓ Installed successfully from $mirror_name"
-            installed=true
-            break
+        if timeout 120 wget --show-progress --progress=bar:force -O "$TEMP_TARBALL" "$cdn_url" 2>&1; then
+            size=$(stat -c%s "$TEMP_TARBALL" 2>/dev/null || echo 0)
+            if [ "$size" -gt 40000000 ]; then
+                echo "  ✓ Downloaded $(($size / 1024 / 1024))MB"
+                downloaded=true
+                break
+            else
+                echo "  ✗ File too small, trying next..."
+                rm -f "$TEMP_TARBALL"
+            fi
         else
-            echo "  ✗ Failed with $mirror_name, trying next..."
-            # Clean up failed installation
-            proot-distro remove $DISTRO 2>/dev/null
+            echo "  ✗ Failed, trying next..."
+            rm -f "$TEMP_TARBALL"
         fi
     done
 
-    # Fallback to default if all CDN mirrors failed
-    if [ "$installed" = false ]; then
-        echo "⚠ All CDN mirrors failed, using default (may be slow)..."
-        unset PD_OVERRIDE_TARBALL_URL
-        proot-distro install $DISTRO || { echo "Error: Ubuntu installation failed"; exit 1; }
+    if [ "$downloaded" = false ]; then
+        echo "Error: All CDN mirrors failed"
+        exit 1
     fi
 
-    unset PD_OVERRIDE_TARBALL_URL
-    echo "✓ Ubuntu container installed"
+    # Extract rootfs directly (bypass proot-distro)
+    echo "Extracting rootfs (this may take 1-2 minutes)..."
+    mkdir -p "$ROOTFS_DIR"
+
+    # Extract with progress (strip first directory level)
+    if pv "$TEMP_TARBALL" 2>/dev/null | tar -xJf - -C "$ROOTFS_DIR" --strip-components=1 2>/dev/null; then
+        echo "  ✓ Extracted with progress"
+    else
+        # Fallback without pv
+        tar -xJf "$TEMP_TARBALL" -C "$ROOTFS_DIR" --strip-components=1 || {
+            echo "Error: Extraction failed"
+            rm -rf "$ROOTFS_DIR"
+            rm -f "$TEMP_TARBALL"
+            exit 1
+        }
+    fi
+
+    # Cleanup
+    rm -f "$TEMP_TARBALL"
+
+    echo "✓ Ubuntu container installed (direct method)"
 else
     echo "✓ Ubuntu container already exists"
 fi
