@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.1.1"
+VERSION="4.1.2"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -1106,13 +1106,27 @@ install_code_server() {
                 echo "npm версия: $(npm --version 2>/dev/null || echo 'не установлен')"
                 echo ""
 
+                # Очистка старых файлов перед установкой
+                echo "Очистка старых файлов..."
+                pkill -f "code-server" 2>/dev/null
+                rm -f /usr/local/bin/code-server 2>/dev/null
+                rm -rf /usr/local/lib/code-server 2>/dev/null
+                npm uninstall -g code-server 2>/dev/null
+                echo ""
+
                 # Устанавливаем code-server через npm
                 echo "Устанавливаю code-server через npm (это может занять несколько минут)..."
-                if npm install -g code-server --unsafe-perm; then
+                echo "⚠ Если увидишь предупреждение о версии Node.js - это нормально, установка продолжится"
+                echo ""
+
+                if npm install -g code-server --unsafe-perm --force; then
                     echo ""
                     echo "✓ Code-Server установлен: $(code-server --version 2>/dev/null | head -1 || echo 'установлен')"
                 else
                     echo "✗ Ошибка установки через npm!"
+                    echo ""
+                    echo "Попробуйте обновить Node.js:"
+                    echo "  apt update && apt install -y nodejs npm"
                     read -r
                     continue
                 fi
