@@ -96,16 +96,37 @@ if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
         
         for url in "${MIRRORS[@]}"; do
             echo "Trying: $url"
-            # Try to download using curl (resume supported)
-            if curl -L -C - --connect-timeout 5 --max-time 600 -o "$CACHE_FILE.part" "$url"; then
-                if [ -s "$CACHE_FILE.part" ]; then
-                    mv "$CACHE_FILE.part" "$CACHE_FILE"
-                    DOWNLOAD_SUCCESS=true
-                    echo " Download successful!"
-                    break
+            # -f: fail on HTTP errors, -L: follow redirects, -C -: resume, --retry: retry transient errors
+            if curl -fL -C - --connect-timeout 10 --max-time 600 --retry 1 -o "$CACHE_FILE.part" "$url"; then
+                
+                # 1. Check size (min 5MB to avoid broken downloads/error pages)
+                FSIZE=$(wc -c < "$CACHE_FILE.part")
+                if [ "$FSIZE" -lt 5000000 ]; then
+                    echo "  Error: File too small ($FSIZE bytes). Likely corrupted."
+                    rm -f "$CACHE_FILE.part"
+                    continue
                 fi
+
+                # 2. Checksum validation (if available in proot-distro config)
+                if [ -n "$TARBALL_SHA256" ] && command -v sha256sum >/dev/null; then
+                     echo "  Verifying checksum..."
+                     FILE_SHA=$(sha256sum "$CACHE_FILE.part" | cut -d' ' -f1)
+                     if [ "$FILE_SHA" != "$TARBALL_SHA256" ]; then
+                         echo "  Error: Checksum mismatch!"
+                         echo "  Expected: $TARBALL_SHA256"
+                         echo "  Got:      $FILE_SHA"
+                         rm -f "$CACHE_FILE.part"
+                         continue
+                     fi
+                     echo "  Checksum verified."
+                fi
+
+                mv "$CACHE_FILE.part" "$CACHE_FILE"
+                DOWNLOAD_SUCCESS=true
+                echo " Download successful!"
+                break
             fi
-            echo " Mirror failed, trying next..."
+            echo " Mirror failed or connection error, trying next..."
         done
         
         if [ "$DOWNLOAD_SUCCESS" = false ]; then
