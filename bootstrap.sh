@@ -15,7 +15,7 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="4.5"
+VERSION="4.6"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
 
@@ -73,8 +73,8 @@ if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
     echo "Creating Ubuntu container (this may take a few minutes)..."
 
     # Detect CPU architecture
-    local arch=$(uname -m)
-    local ubuntu_arch=""
+    arch=$(uname -m)
+    ubuntu_arch=""
     case "$arch" in
         aarch64|arm64)
             ubuntu_arch="aarch64"
@@ -90,59 +90,45 @@ if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
 
     echo "Detected architecture: $arch → ubuntu-questing-$ubuntu_arch"
 
-    # Fast download via CDN mirrors (avoid slow cloud-images.ubuntu.com)
-    echo "Attempting fast download from CDN mirrors..."
+    # Fast download via CDN mirrors using PD_OVERRIDE_TARBALL_URL
+    # This forces proot-distro to use our CDN instead of slow default mirrors
+    echo "Configuring fast CDN mirrors for download..."
 
-    local alt_urls=(
+    cdn_urls=(
         "https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
         "https://mirror.ghproxy.com/https://github.com/termux/proot-distro/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
         "https://cdn.jsdelivr.net/gh/termux/proot-distro@v4.30.1/releases/download/v4.30.1/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
     )
 
-    local cache_dir="$PREFIX/var/lib/proot-distro/dlcache"
-    local tarball="$cache_dir/ubuntu-questing-${ubuntu_arch}-pd-v4.30.1.tar.xz"
+    # Try each CDN mirror until successful
+    installed=false
+    for cdn_url in "${cdn_urls[@]}"; do
+        mirror_name=$(echo "$cdn_url" | cut -d'/' -f3)
+        echo "  Trying CDN: $mirror_name"
 
-    mkdir -p "$cache_dir"
+        # Override proot-distro's tarball URL to use fast CDN
+        export PD_OVERRIDE_TARBALL_URL="$cdn_url"
 
-    # Try downloading from fast CDN mirrors
-    local downloaded=false
-    for url in "${alt_urls[@]}"; do
-        local mirror_name=$(echo $url | cut -d'/' -f3)
-        echo "  Trying: $mirror_name"
-
-        if timeout 120 wget --show-progress --progress=bar:force -O "$tarball" "$url" 2>&1; then
-            # Check file size (should be > 40MB)
-            local size=$(stat -c%s "$tarball" 2>/dev/null || echo 0)
-            if [ "$size" -gt 40000000 ]; then
-                echo "  ✓ Downloaded successfully ($(($size / 1024 / 1024))MB)"
-                downloaded=true
-                break
-            else
-                echo "  ✗ File corrupted, trying next mirror..."
-                rm -f "$tarball"
-            fi
+        # Try installing with 2-minute timeout
+        if timeout 180 proot-distro install $DISTRO 2>&1; then
+            echo "  ✓ Installed successfully from $mirror_name"
+            installed=true
+            break
         else
-            echo "  ✗ Timeout or error, trying next mirror..."
-            rm -f "$tarball"
+            echo "  ✗ Failed with $mirror_name, trying next..."
+            # Clean up failed installation
+            proot-distro remove $DISTRO 2>/dev/null
         fi
     done
 
-    # Install Ubuntu (will use cached file if downloaded)
-    if [ "$downloaded" = true ]; then
-        echo "Installing Ubuntu from cache..."
-        proot-distro install $DISTRO || {
-            echo "Cache install failed, trying default method..."
-            rm -f "$tarball"
-            downloaded=false
-        }
-    fi
-
-    # Fallback to default if CDN mirrors failed
-    if [ "$downloaded" = false ]; then
-        echo "Using default proot-distro download (may be slow)..."
+    # Fallback to default if all CDN mirrors failed
+    if [ "$installed" = false ]; then
+        echo "⚠ All CDN mirrors failed, using default (may be slow)..."
+        unset PD_OVERRIDE_TARBALL_URL
         proot-distro install $DISTRO || { echo "Error: Ubuntu installation failed"; exit 1; }
     fi
 
+    unset PD_OVERRIDE_TARBALL_URL
     echo "✓ Ubuntu container installed"
 else
     echo "✓ Ubuntu container already exists"
