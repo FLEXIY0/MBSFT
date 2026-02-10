@@ -17,14 +17,14 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-# Пути
+
 # Пути
 if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
     BASE_DIR="/termux-home/mbsft-servers"
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.1.0"
+VERSION="4.1.1"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
