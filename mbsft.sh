@@ -868,6 +868,10 @@ step_ssh() {
         case $choice in
             0)
                 echo "=== Запуск SSH ==="
+                # Create privilege separation directory if missing
+                mkdir -p /run/sshd
+                chmod 0755 /run/sshd
+                
                 # Start SSH
                 /usr/sbin/sshd 2>/dev/null
 
@@ -876,7 +880,7 @@ step_ssh() {
                     echo "✓ SSH запущен на порту 2222"
                 else
                     echo "✗ Не удалось запустить SSH"
-                    echo "Запусти DEBUG для диагностики"
+                    echo "Попробуйте 'DEBUG sshd' для диагностики"
                 fi
                 read -r
                 ;;
@@ -917,7 +921,7 @@ step_ssh() {
                 esac
                 ;;
             2)
-                local user=$(whoami)
+                local user="root" # Inside proot we are root
                 local local_ip=$(get_local_ip)
                 local ext_ip=$(get_external_ip)
                 echo "=== SSH Connection Info ==="
@@ -942,6 +946,8 @@ step_ssh() {
             4)
                 echo "=== Repair SSH ==="
                 pkill sshd 2>/dev/null
+                mkdir -p /run/sshd
+                chmod 0755 /run/sshd
                 chmod 700 /root /root/.ssh 2>/dev/null
                 chmod 600 /root/.ssh/authorized_keys 2>/dev/null
                 ssh-keygen -A
@@ -955,6 +961,8 @@ step_ssh() {
                 echo "Press Ctrl+C to exit"
                 echo ""
                 pkill sshd 2>/dev/null
+                mkdir -p /run/sshd
+                chmod 0755 /run/sshd
                 /usr/sbin/sshd -D -d -e -p 2222
                 /usr/sbin/sshd 2>/dev/null
                 read -r
