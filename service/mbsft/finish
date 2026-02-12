@@ -1,0 +1,15 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# MBSFT Service Finish Script
+# Called when service stops (for cleanup)
+
+exec 2>&1
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] MBSFT service finished/stopped"
+
+# Release wake lock
+termux-wake-unlock 2>/dev/null || true
+
+# Clean up PID file
+rm -f /data/data/com.termux/files/home/.mbsft-service.pid
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Cleanup completed"

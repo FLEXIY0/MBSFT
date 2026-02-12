@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# MBSFT Service Logger
+# Uses svlogd to handle log rotation and management
+
+exec svlogd -tt /data/data/com.termux/files/home/.mbsft-service-logs

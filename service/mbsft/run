@@ -1,0 +1,175 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# MBSFT Persistent Service for Termux
+# Version: 1.0.0
+# This service keeps MBSFT running persistently even when Termux app is closed
+
+# Redirect stderr to stdout for logging
+exec 2>&1
+
+# Set environment
+export PREFIX=/data/data/com.termux/files/usr
+export PATH=$PREFIX/bin:$PATH
+export HOME=/data/data/com.termux/files/home
+
+# Logging
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] MBSFT service starting..."
+
+# Acquire wake lock to prevent Android from killing Termux
+termux-wake-lock 2>/dev/null || echo "Warning: termux-wake-lock not available"
+
+# Service configuration
+PROOT_SESSION_NAME="mbsft-persistent"
+DISTRO="ubuntu"
+BIND_HOME="$HOME:/termux-home"
+SERVICE_CHECK_INTERVAL=10
+MAX_RESTART_ATTEMPTS=5
+RESTART_DELAY=5
+
+# PID tracking
+SERVICE_PID_FILE="$HOME/.mbsft-service.pid"
+echo $$ > "$SERVICE_PID_FILE"
+
+# Cleanup function
+cleanup() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Service shutting down..."
+    termux-wake-unlock 2>/dev/null || true
+    rm -f "$SERVICE_PID_FILE"
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT
+
+# Function to check if proot session is running
+is_proot_running() {
+    pgrep -f "proot-distro.*$DISTRO" >/dev/null 2>&1
+}
+
+# Function to start proot session with MBSFT environment
+start_proot_session() {
+    local attempt=1
+
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting proot-distro session..."
+
+    # Check if proot-distro is available
+    if ! command -v proot-distro >/dev/null 2>&1; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: proot-distro not found!"
+        return 1
+    fi
+
+    # Check if Ubuntu is installed
+    if ! proot-distro list 2>/dev/null | grep -q "$DISTRO"; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Ubuntu distro not installed!"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Please run bootstrap.sh first"
+        return 1
+    fi
+
+    # Start persistent session that keeps services running
+    # This runs a monitoring loop inside Ubuntu that:
+    # 1. Starts SSH if configured
+    # 2. Monitors and maintains watchdog/autosave services
+    # 3. Keeps the session alive
+    proot-distro login "$DISTRO" \
+        --bind "$HOME:/termux-home" \
+        --shared-tmp \
+        -- /bin/bash -c '
+            # Inside Ubuntu proot environment
+            export MBSFT_BASE_DIR="/termux-home/mbsft-servers"
+            export TERM=xterm-256color
+
+            echo "[$(date +"%Y-%m-%d %H:%M:%S")] Proot session started"
+
+            # Start SSH daemon if configured and not running
+            if [ -f /usr/sbin/sshd ]; then
+                if ! pgrep -x sshd >/dev/null; then
+                    echo "[$(date +"%Y-%m-%d %H:%M:%S")] Starting SSH daemon on port 2222..."
+                    /usr/sbin/sshd -p 2222 2>/dev/null || echo "SSH start failed (may already be running)"
+                else
+                    echo "[$(date +"%Y-%m-%d %H:%M:%S")] SSH daemon already running"
+                fi
+            fi
+
+            # Monitor loop - keeps session alive and monitors services
+            echo "[$(date +"%Y-%m-%d %H:%M:%S")] Starting service monitor loop..."
+
+            while true; do
+                # Check if any servers have active watchdog/autosave services
+                if [ -d "$MBSFT_BASE_DIR" ]; then
+                    for server_dir in "$MBSFT_BASE_DIR"/*; do
+                        if [ -d "$server_dir" ]; then
+                            # Check watchdog
+                            if [ -f "$server_dir/.watchdog.pid" ]; then
+                                watchdog_pid=$(cat "$server_dir/.watchdog.pid" 2>/dev/null)
+                                if [ -n "$watchdog_pid" ] && ! kill -0 "$watchdog_pid" 2>/dev/null; then
+                                    echo "[$(date +"%Y-%m-%d %H:%M:%S")] Watchdog died for $(basename "$server_dir"), would restart via MBSFT"
+                                fi
+                            fi
+
+                            # Check autosave
+                            if [ -f "$server_dir/.autosave.pid" ]; then
+                                autosave_pid=$(cat "$server_dir/.autosave.pid" 2>/dev/null)
+                                if [ -n "$autosave_pid" ] && ! kill -0 "$autosave_pid" 2>/dev/null; then
+                                    echo "[$(date +"%Y-%m-%d %H:%M:%S")] Autosave died for $(basename "$server_dir"), would restart via MBSFT"
+                                fi
+                            fi
+                        fi
+                    done
+                fi
+
+                # Keep alive heartbeat
+                sleep 30
+            done
+        ' &
+
+    PROOT_PID=$!
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Proot session started with PID: $PROOT_PID"
+
+    # Wait a moment to see if it crashes immediately
+    sleep 3
+    if ! kill -0 $PROOT_PID 2>/dev/null; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Proot session died immediately"
+        return 1
+    fi
+
+    return 0
+}
+
+# Main service loop
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] MBSFT persistent service initialized"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] This service keeps proot-distro session running"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] SSH and server services remain active even when Termux closes"
+
+restart_count=0
+
+while true; do
+    # Check if proot session is running
+    if ! is_proot_running; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Proot session not running, starting..."
+
+        if start_proot_session; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Proot session started successfully"
+            restart_count=0
+        else
+            restart_count=$((restart_count + 1))
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Failed to start proot session (attempt $restart_count/$MAX_RESTART_ATTEMPTS)"
+
+            if [ $restart_count -ge $MAX_RESTART_ATTEMPTS ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Max restart attempts reached, giving up"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Please check logs and run 'sv restart mbsft' manually"
+                sleep 300  # Wait 5 minutes before trying again
+                restart_count=0
+            else
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting ${RESTART_DELAY}s before retry..."
+                sleep $RESTART_DELAY
+            fi
+        fi
+    else
+        # Session is running, just monitor
+        # Echo periodic heartbeat (every 5 minutes)
+        if [ $(($(date +%s) % 300)) -eq 0 ]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Service heartbeat - proot session healthy"
+        fi
+    fi
+
+    # Check interval
+    sleep $SERVICE_CHECK_INTERVAL
+done

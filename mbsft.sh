@@ -24,7 +24,7 @@ if [ -z "$MBSFT_BASE_DIR" ] && [ -d "/termux-home" ]; then
 else
     BASE_DIR="${MBSFT_BASE_DIR:-$HOME/mbsft-servers}"
 fi
-VERSION="4.6.0"
+VERSION="4.7.0"
 # Java: будет найдена динамически
 JAVA_BIN=""
 _JAVA_CHECKED=""
@@ -1763,6 +1763,408 @@ show_banner() {
 }
 
 # =====================
+# Service Management (Termux-only)
+# =====================
+
+# Check if running in Termux environment
+is_termux_env() {
+    [ -d "/termux-home" ] && [ -n "$PREFIX" ]
+}
+
+# Check if termux-services is available
+has_termux_services() {
+    command -v sv >/dev/null 2>&1
+}
+
+# Get MBSFT service status
+get_service_status() {
+    if ! is_termux_env; then
+        echo "not-termux"
+        return 1
+    fi
+
+    if ! has_termux_services; then
+        echo "no-services"
+        return 1
+    fi
+
+    # Check if service exists
+    if [ ! -d "$PREFIX/var/service/mbsft" ]; then
+        echo "not-installed"
+        return 1
+    fi
+
+    # Check if service is enabled (no 'down' file)
+    if [ -f "$PREFIX/var/service/mbsft/down" ]; then
+        echo "disabled"
+        return 0
+    fi
+
+    # Check if service is running
+    local status_output
+    status_output=$(sv status mbsft 2>/dev/null)
+
+    if echo "$status_output" | grep -q "run:"; then
+        echo "running"
+        return 0
+    elif echo "$status_output" | grep -q "down:"; then
+        echo "stopped"
+        return 0
+    else
+        echo "unknown"
+        return 1
+    fi
+}
+
+# Service management menu
+service_management_menu() {
+    if ! is_termux_env; then
+        clear
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Управление Сервисом"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "⚠  Эта функция доступна только в Termux"
+        echo ""
+        echo "Persistent service работает только в Termux,"
+        echo "где используется proot-distro окружение."
+        echo ""
+        read -p "Нажмите Enter для возврата..."
+        return
+    fi
+
+    if ! has_termux_services; then
+        clear
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Управление Сервисом"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "⚠  termux-services не установлен"
+        echo ""
+        echo "Для использования persistent service установите:"
+        echo "  pkg install termux-services termux-api"
+        echo ""
+        echo "После установки перезапустите Termux."
+        echo ""
+        read -p "Нажмите Enter для возврата..."
+        return
+    fi
+
+    while true; do
+        clear
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Управление Persistent Service"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        local service_status
+        service_status=$(get_service_status)
+
+        echo "Статус сервиса: "
+        case "$service_status" in
+            "running")
+                echo -e "  ${GREEN}● Работает${NC}"
+                ;;
+            "stopped")
+                echo -e "  ${RED}● Остановлен${NC}"
+                ;;
+            "disabled")
+                echo -e "  ${ORANGE}○ Отключен${NC}"
+                ;;
+            "not-installed")
+                echo -e "  ${RED}✗ Не установлен${NC}"
+                ;;
+            *)
+                echo -e "  ${ORANGE}? Неизвестно${NC}"
+                ;;
+        esac
+
+        echo ""
+        echo "Что делает сервис:"
+        echo "  • Поддерживает proot-distro сессию активной"
+        echo "  • SSH daemon работает постоянно"
+        echo "  • Watchdog/autosave не прерываются"
+        echo "  • Автоматический перезапуск при сбое"
+        echo "  • Работает даже когда Termux закрыт"
+        echo ""
+
+        local menu_items=()
+
+        case "$service_status" in
+            "running")
+                menu_items=("Остановить сервис" "Перезапустить сервис" "Отключить сервис (disable)" "Посмотреть логи" "Назад")
+                ;;
+            "stopped")
+                menu_items=("Запустить сервис" "Отключить сервис (disable)" "Посмотреть логи" "Назад")
+                ;;
+            "disabled")
+                menu_items=("Включить сервис (enable)" "Удалить сервис" "Назад")
+                ;;
+            "not-installed")
+                menu_items=("Установить сервис" "Назад")
+                ;;
+            *)
+                menu_items=("Проверить статус" "Назад")
+                ;;
+        esac
+
+        local choice
+        choice=$(arrow_menu menu_items "Выберите действие")
+
+        case "$service_status:$choice" in
+            running:0)
+                echo ""
+                echo "Останавливаем сервис..."
+                sv down mbsft
+                sleep 2
+                ;;
+            running:1)
+                echo ""
+                echo "Перезапускаем сервис..."
+                sv restart mbsft
+                sleep 2
+                ;;
+            running:2)
+                echo ""
+                echo "Отключаем сервис..."
+                sv-disable mbsft
+                sv down mbsft
+                sleep 2
+                ;;
+            running:3|stopped:2)
+                view_service_logs
+                ;;
+            running:4|stopped:3|disabled:2)
+                return
+                ;;
+            stopped:0)
+                echo ""
+                echo "Запускаем сервис..."
+                sv up mbsft
+                sleep 2
+                ;;
+            stopped:1)
+                echo ""
+                echo "Отключаем сервис..."
+                sv-disable mbsft
+                sleep 1
+                ;;
+            disabled:0)
+                echo ""
+                echo "Включаем сервис..."
+                sv-enable mbsft
+                sleep 1
+                echo "Запускаем сервис..."
+                sv up mbsft
+                sleep 2
+                ;;
+            disabled:1)
+                echo ""
+                read -p "Удалить сервис полностью? (y/n): " confirm
+                if [[ "$confirm" == "y" ]]; then
+                    echo "Удаляем сервис..."
+                    sv down mbsft 2>/dev/null
+                    rm -rf "$PREFIX/var/service/mbsft"
+                    echo "✓ Сервис удален"
+                    sleep 2
+                fi
+                ;;
+            not-installed:0)
+                install_service
+                ;;
+            not-installed:1)
+                return
+                ;;
+            *:0)
+                echo ""
+                echo "Проверяем статус..."
+                sv status mbsft 2>&1 || echo "Сервис недоступен"
+                read -p "Нажмите Enter для продолжения..."
+                ;;
+            *:1|-1)
+                return
+                ;;
+        esac
+    done
+}
+
+# Install service
+install_service() {
+    clear
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Установка Persistent Service"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Эта функция установит runit-сервис, который:"
+    echo "  • Автоматически запускает proot-distro сессию"
+    echo "  • Поддерживает SSH daemon"
+    echo "  • Сохраняет все watchdog/autosave процессы"
+    echo ""
+    read -p "Продолжить установку? (y/n): " confirm
+
+    if [[ "$confirm" != "y" ]]; then
+        return
+    fi
+
+    echo ""
+    echo "Создаем структуру сервиса..."
+
+    # Create service directory
+    SERVICE_DIR="$PREFIX/var/service/mbsft"
+    mkdir -p "$SERVICE_DIR/log"
+
+    # Create main run script
+    cat > "$SERVICE_DIR/run" << 'SERVICE_RUN_EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+exec 2>&1
+
+export PREFIX=/data/data/com.termux/files/usr
+export PATH=$PREFIX/bin:$PATH
+export HOME=/data/data/com.termux/files/home
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] MBSFT service starting..."
+
+termux-wake-lock 2>/dev/null || echo "Warning: termux-wake-lock not available"
+
+DISTRO="ubuntu"
+SERVICE_CHECK_INTERVAL=10
+
+cleanup() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Service shutting down..."
+    termux-wake-unlock 2>/dev/null || true
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT
+
+is_proot_running() {
+    pgrep -f "proot-distro.*$DISTRO" >/dev/null 2>&1
+}
+
+start_proot_session() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting proot-distro session..."
+
+    if ! command -v proot-distro >/dev/null 2>&1; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: proot-distro not found!"
+        return 1
+    fi
+
+    if ! proot-distro list 2>/dev/null | grep -q "$DISTRO"; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Ubuntu distro not installed!"
+        return 1
+    fi
+
+    proot-distro login "$DISTRO" \
+        --bind "$HOME:/termux-home" \
+        --shared-tmp \
+        -- /bin/bash -c '
+            export MBSFT_BASE_DIR="/termux-home/mbsft-servers"
+            export TERM=xterm-256color
+
+            echo "[$(date +"%Y-%m-%d %H:%M:%S")] Proot session started"
+
+            if [ -f /usr/sbin/sshd ]; then
+                if ! pgrep -x sshd >/dev/null; then
+                    echo "[$(date +"%Y-%m-%d %H:%M:%S")] Starting SSH daemon..."
+                    /usr/sbin/sshd -p 2222 2>/dev/null || echo "SSH start failed"
+                fi
+            fi
+
+            echo "[$(date +"%Y-%m-%d %H:%M:%S")] Service monitor active"
+
+            while true; do
+                sleep 30
+            done
+        ' &
+
+    PROOT_PID=$!
+    sleep 3
+    if ! kill -0 $PROOT_PID 2>/dev/null; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Proot session died"
+        return 1
+    fi
+
+    return 0
+}
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] MBSFT persistent service initialized"
+
+while true; do
+    if ! is_proot_running; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting proot session..."
+        start_proot_session || sleep 30
+    fi
+    sleep $SERVICE_CHECK_INTERVAL
+done
+SERVICE_RUN_EOF
+
+    chmod +x "$SERVICE_DIR/run"
+
+    # Create log run script
+    cat > "$SERVICE_DIR/log/run" << 'SERVICE_LOG_EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+exec svlogd -tt /data/data/com.termux/files/home/.mbsft-service-logs
+SERVICE_LOG_EOF
+
+    chmod +x "$SERVICE_DIR/log/run"
+
+    # Create finish script
+    cat > "$SERVICE_DIR/finish" << 'SERVICE_FINISH_EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+exec 2>&1
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Service stopped"
+termux-wake-unlock 2>/dev/null || true
+SERVICE_FINISH_EOF
+
+    chmod +x "$SERVICE_DIR/finish"
+
+    # Create log directory
+    mkdir -p "$HOME/.mbsft-service-logs"
+
+    echo "✓ Сервис установлен"
+    echo ""
+    echo "Сервис создан, но не запущен."
+    echo ""
+    read -p "Запустить сервис сейчас? (y/n): " start_now
+
+    if [[ "$start_now" == "y" ]]; then
+        echo "Включаем и запускаем сервис..."
+        sv-enable mbsft
+        sleep 1
+        sv up mbsft
+        sleep 2
+        echo "✓ Сервис запущен"
+    fi
+
+    echo ""
+    read -p "Нажмите Enter для продолжения..."
+}
+
+# View service logs
+view_service_logs() {
+    clear
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Логи Сервиса"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    if [ -f "$HOME/.mbsft-service-logs/current" ]; then
+        echo "Последние 30 строк:"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        tail -n 30 "$HOME/.mbsft-service-logs/current"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "Полный лог: ~/.mbsft-service-logs/current"
+    else
+        echo "Логи не найдены."
+        echo "Сервис еще не запускался или не установлен."
+    fi
+
+    echo ""
+    read -p "Нажмите Enter для возврата..."
+}
+
+# =====================
 # Main Loop
 # =====================
 main_loop() {
@@ -1777,7 +2179,23 @@ main_loop() {
         read -ra servers <<< "$(get_servers)"
         local srv_count=${#servers[@]}
 
-        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Web IDE (code-server)" "Проверить обновление" "Удалить всё" "Выход")
+        # Conditionally add Service menu for Termux
+        local menu_items=("Установить зависимости" "Создать сервер" "Мои серверы ($srv_count)" "Дашборд" "SSH" "Web IDE (code-server)")
+
+        # Add Service menu only in Termux environment
+        if is_termux_env; then
+            local svc_status=$(get_service_status)
+            local svc_indicator=""
+            case "$svc_status" in
+                "running") svc_indicator=" ${GREEN}●${NC}" ;;
+                "stopped") svc_indicator=" ${RED}●${NC}" ;;
+                "disabled") svc_indicator=" ${ORANGE}○${NC}" ;;
+                *) svc_indicator="" ;;
+            esac
+            menu_items+=("Сервис$svc_indicator")
+        fi
+
+        menu_items+=("Проверить обновление" "Удалить всё" "Выход")
 
         # Header с версией и количеством серверов
         local menu_header="MBSFT v$VERSION | Серверов: $srv_count"
@@ -1785,6 +2203,7 @@ main_loop() {
         local choice
         choice=$(arrow_menu menu_items "$menu_header")
 
+        # Handle menu choice (dynamically adjusted for Termux service menu)
         case $choice in
             0) step_deps ;;
             1) create_server ;;
@@ -1792,9 +2211,32 @@ main_loop() {
             3) dashboard ;;
             4) step_ssh ;;
             5) install_code_server ;;
-            6) manual_check_update ;;
-            7) uninstall_all ;;
-            8|-1) exit 0 ;;
+            6)
+                if is_termux_env; then
+                    service_management_menu
+                else
+                    manual_check_update
+                fi
+                ;;
+            7)
+                if is_termux_env; then
+                    manual_check_update
+                else
+                    uninstall_all
+                fi
+                ;;
+            8)
+                if is_termux_env; then
+                    uninstall_all
+                else
+                    exit 0
+                fi
+                ;;
+            9|-1)
+                if is_termux_env; then
+                    exit 0
+                fi
+                ;;
         esac
     done
 }

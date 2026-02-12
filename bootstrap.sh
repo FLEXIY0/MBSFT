@@ -15,9 +15,10 @@ if [ ! -t 0 ]; then
     exit
 fi
 
-VERSION="5.0.4"
+VERSION="5.1.0"
 DISTRO="ubuntu"
 GITHUB_RAW="https://raw.githubusercontent.com/FLEXIY0/MBSFT/main"
+SERVICE_AVAILABLE=true  # Flag for service installation
 
 clear
 echo "============================================"
@@ -27,9 +28,10 @@ echo "============================================"
 echo ""
 echo "This will setup proot Ubuntu environment with:"
 echo "  • Ubuntu container via proot-distro"
-echo "  • Java 8 + tmux + systemd"
+echo "  • Java 8 + tmux + SSH daemon"
 echo "  • MBSFT main script"
 echo "  • Wrapper for seamless access"
+echo "  • Persistent service (keeps MBSFT running)"
 echo ""
 read -p "Continue? (y/n): " yn
 if [[ "$yn" != "y" ]]; then
@@ -38,7 +40,7 @@ if [[ "$yn" != "y" ]]; then
 fi
 
 echo ""
-echo "=== Step 1/5: Updating Termux packages ==="
+echo "=== Step 1/9: Updating Termux packages ==="
 echo "Running pkg update..."
 pkg update -y || { echo "Error: pkg update failed"; exit 1; }
 
@@ -48,7 +50,7 @@ pkg upgrade -y || { echo "Error: pkg upgrade failed"; exit 1; }
 echo "✓ Packages upgraded"
 
 echo ""
-echo "=== Step 2/5: Installing proot-distro ==="
+echo "=== Step 2/9: Installing proot-distro ==="
 if ! command -v proot-distro &>/dev/null; then
     echo "Installing proot-distro package..."
     pkg install -y proot-distro || { echo "Error: proot-distro install failed"; exit 1; }
@@ -58,7 +60,7 @@ else
 fi
 
 echo ""
-echo "=== Step 3/5: Installing Ubuntu container ==="
+echo "=== Step 3/9: Installing Ubuntu container ==="
 if [ ! -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
     echo "Installing Ubuntu..."
     
@@ -150,7 +152,7 @@ else
 fi
 
 echo ""
-echo "=== Step 4/5: Installing dependencies inside Ubuntu ==="
+echo "=== Step 4/9: Installing dependencies inside Ubuntu ==="
 echo "Installing Java, tmux, SSH, fzf, and IDE libs..."
 proot-distro login $DISTRO -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
@@ -159,7 +161,7 @@ proot-distro login $DISTRO -- bash -c "
 echo "✓ Dependencies installed"
 
 echo ""
-echo "=== Step 5/7: Configuring SSH inside Ubuntu ==="
+echo "=== Step 5/9: Configuring SSH inside Ubuntu ==="
 proot-distro login $DISTRO -- bash -c "
     # Create SSH directory
     mkdir -p /root/.ssh
@@ -179,7 +181,7 @@ proot-distro login $DISTRO -- bash -c "
 echo "✓ SSH configured (port 2222)"
 
 echo ""
-echo "=== Step 6/7: Installing MBSFT main script ==="
+echo "=== Step 6/9: Installing MBSFT main script ==="
 echo "Downloading mbsft.sh from GitHub..."
 proot-distro login $DISTRO -- bash -c "
     mkdir -p /usr/local/bin
@@ -215,7 +217,7 @@ proot-distro login $DISTRO -- bash -c "
 echo "✓ Main script installed at /usr/local/bin/mbsft"
 
 echo ""
-echo "=== Step 7/7: Creating wrapper script ==="
+echo "=== Step 7/9: Creating wrapper script ==="
 cat > "$PREFIX/bin/mbsft" << 'WRAPPER_EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 # MBSFT v4.0 Wrapper
@@ -246,6 +248,120 @@ chmod +x "$PREFIX/bin/mbsft" || { echo "Error: Failed to create wrapper"; exit 1
 echo "✓ Wrapper created at $PREFIX/bin/mbsft"
 
 echo ""
+echo "=== Step 8/9: Installing Termux service packages ==="
+echo "Installing termux-services and termux-api..."
+
+# Install termux-services (for runit service management)
+if ! command -v sv &>/dev/null; then
+    pkg install -y termux-services || {
+        echo "Warning: termux-services install failed. Service will not be available."
+        SERVICE_AVAILABLE=false
+    }
+else
+    echo "✓ termux-services already installed"
+fi
+
+# Install termux-api (for wake-lock functionality)
+if ! command -v termux-wake-lock &>/dev/null; then
+    pkg install -y termux-api || {
+        echo "Warning: termux-api install failed. Wake-lock feature will not be available."
+    }
+else
+    echo "✓ termux-api already installed"
+fi
+
+if [ "$SERVICE_AVAILABLE" = true ]; then
+    echo "✓ Service packages installed"
+    echo ""
+    echo "IMPORTANT: You need to restart Termux to activate termux-services!"
+    echo "After restart, the service-daemon will be available."
+else
+    echo "⚠ Service installation incomplete - manual setup may be required"
+fi
+
+echo ""
+echo "=== Step 9/9: Setting up MBSFT persistent service ==="
+
+if [ "$SERVICE_AVAILABLE" = true ]; then
+    echo "Creating MBSFT service structure..."
+
+    # Create service directory
+    SERVICE_DIR="$PREFIX/var/service/mbsft"
+    mkdir -p "$SERVICE_DIR/log"
+
+    # Check if service files exist in repo
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+    if [ -d "$SCRIPT_DIR/service/mbsft" ]; then
+        echo "Installing service scripts from local repository..."
+
+        # Copy run script
+        if [ -f "$SCRIPT_DIR/service/mbsft/run" ]; then
+            cp "$SCRIPT_DIR/service/mbsft/run" "$SERVICE_DIR/run"
+            chmod +x "$SERVICE_DIR/run"
+            echo "  ✓ Main service script installed"
+        fi
+
+        # Copy log/run script
+        if [ -f "$SCRIPT_DIR/service/mbsft/log/run" ]; then
+            cp "$SCRIPT_DIR/service/mbsft/log/run" "$SERVICE_DIR/log/run"
+            chmod +x "$SERVICE_DIR/log/run"
+            echo "  ✓ Log service script installed"
+        fi
+
+        # Copy finish script
+        if [ -f "$SCRIPT_DIR/service/mbsft/finish" ]; then
+            cp "$SCRIPT_DIR/service/mbsft/finish" "$SERVICE_DIR/finish"
+            chmod +x "$SERVICE_DIR/finish"
+            echo "  ✓ Finish script installed"
+        fi
+    else
+        echo "Downloading service scripts from GitHub..."
+
+        # Download run script
+        curl -sL "$GITHUB_RAW/service/mbsft/run?t=$(date +%s)" -o "$SERVICE_DIR/run" && \
+            chmod +x "$SERVICE_DIR/run" && \
+            echo "  ✓ Main service script installed" || \
+            echo "  ⚠ Failed to download main service script"
+
+        # Download log/run script
+        curl -sL "$GITHUB_RAW/service/mbsft/log/run?t=$(date +%s)" -o "$SERVICE_DIR/log/run" && \
+            chmod +x "$SERVICE_DIR/log/run" && \
+            echo "  ✓ Log service script installed" || \
+            echo "  ⚠ Failed to download log service script"
+
+        # Download finish script
+        curl -sL "$GITHUB_RAW/service/mbsft/finish?t=$(date +%s)" -o "$SERVICE_DIR/finish" && \
+            chmod +x "$SERVICE_DIR/finish" && \
+            echo "  ✓ Finish script installed" || \
+            echo "  ⚠ Failed to download finish script"
+    fi
+
+    # Create log directory
+    mkdir -p "$HOME/.mbsft-service-logs"
+
+    echo "✓ Service structure created"
+    echo ""
+    echo "Service is installed but NOT enabled by default."
+    echo "To enable persistent service (keeps MBSFT running):"
+    echo "  1. Restart Termux (close and reopen app)"
+    echo "  2. Run: sv-enable mbsft"
+    echo "  3. Start service: sv up mbsft"
+    echo ""
+    echo "Service commands:"
+    echo "  sv up mbsft       - Start service"
+    echo "  sv down mbsft     - Stop service"
+    echo "  sv status mbsft   - Check status"
+    echo "  sv restart mbsft  - Restart service"
+    echo ""
+    echo "View logs:"
+    echo "  tail -f ~/.mbsft-service-logs/current"
+else
+    echo "⚠ Skipping service setup (termux-services not available)"
+    echo "You can still use MBSFT normally with: mbsft"
+fi
+
+echo ""
 echo "============================================"
 echo "  ✓ Installation Complete!"
 echo "============================================"
@@ -253,6 +369,21 @@ echo ""
 echo "Quick Start:"
 echo "  mbsft          - Launch MBSFT menu"
 echo ""
+
+if [ "$SERVICE_AVAILABLE" = true ]; then
+    echo "Persistent Service (Recommended):"
+    echo "  After restarting Termux:"
+    echo "    sv-enable mbsft   - Enable service (auto-start on boot)"
+    echo "    sv up mbsft       - Start service now"
+    echo ""
+    echo "  Benefits:"
+    echo "    • MBSFT keeps running even when Termux is closed"
+    echo "    • SSH daemon stays active"
+    echo "    • Server watchdogs/autosave persist"
+    echo "    • Automatic restart on crash"
+    echo ""
+fi
+
 echo "SSH Access (Ubuntu container):"
 echo "  Port: 2222 (inside proot)"
 echo "  User: root"
@@ -262,5 +393,5 @@ echo "  1. Run: mbsft"
 echo "  2. Go to: SSH → Add SSH key"
 echo "  3. Or set password with 'passwd' inside proot"
 echo ""
-echo "SSH will auto-start when you run mbsft."
+echo "SSH will auto-start when you run mbsft or when service is running."
 echo ""
